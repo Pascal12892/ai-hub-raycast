@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { closeSync, copyFileSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -584,6 +584,21 @@ export type RunRequest = {
   signal?: AbortSignal;
 };
 
+/**
+ * Nur für die Fehlersuche: Ist AIHUB_DEBUG_FILE gesetzt, wird jede Rohausgabe der CLIs dort angehängt.
+ * Der Prompt selbst wird nicht protokolliert.
+ */
+function writeDebugLog(provider: Provider, args: string[], cwd: string, code: number | null, stdout: string, stderr: string) {
+  const file = process.env.AIHUB_DEBUG_FILE;
+  if (!file) return;
+  const shownArgs = args.map((a) => (a === SYSTEM_PROMPT ? "<Stilprompt>" : a)).join(" ");
+  const clip = (text: string) => (text.length > 20_000 ? `${text.slice(0, 10_000)}\n[… gekürzt …]\n${text.slice(-10_000)}` : text);
+  appendFileSync(
+    file,
+    `\n===== ${provider} | ${new Date().toISOString()} | Exit ${code}\nArgumente: ${shownArgs}\nOrdner: ${cwd}\n----- stdout\n${clip(stdout)}\n----- stderr\n${clip(stderr)}\n`,
+  );
+}
+
 export type RunResult = { text: string; model?: string };
 
 export async function run(request: RunRequest): Promise<RunResult> {
@@ -611,6 +626,7 @@ export async function run(request: RunRequest): Promise<RunResult> {
 
   const input = request.provider === "gemini" ? JSON.stringify({ event: "user", message: { content: prompt } }) + "\n" : prompt;
   const { code, stdout, stderr } = await execute(command, [...prefix, ...args], input, options, fileAccess ? FILE_TIMEOUT_MS : ANSWER_TIMEOUT_MS, 4_000_000);
+  writeDebugLog(request.provider, args, options.cwd, code, stdout, stderr);
   if (code !== 0) {
     if (stdout.trim()) {
       try {

@@ -3,6 +3,7 @@
  *
  *   npm run test:live                 alle drei Anbieter
  *   npm run test:live -- claude codex nur bestimmte Anbieter
+ *   npm run test:live -- --debug      zusätzlich Rohausgaben nach ~/aihub-debug.txt
  *
  * Geprüft wird pro Anbieter: CLI gefunden, Version, Anmeldung, Antwort, Umlaute, Rückfrage mit Verlauf,
  * gemeldetes Modell, eingefügte Textdatei, große Datei im Datei-Modus und Abbrechen.
@@ -26,9 +27,16 @@ import {
 
 type Check = { name: string; ok: boolean; detail: string };
 
+const debug = process.argv.includes("--debug");
 const selected = process.argv.slice(2).filter((a): a is Provider => (PROVIDERS as string[]).includes(a));
 const providers: Provider[] = selected.length ? selected : PROVIDERS;
 const root = mkdtempSync(path.join(os.tmpdir(), "aihub-live-"));
+// Mit --debug landen alle Rohausgaben der CLIs in einer Datei im Benutzerordner.
+const debugFile = path.join(os.homedir(), "aihub-debug.txt");
+if (debug) {
+  writeFileSync(debugFile, `AI Hub Debug-Log ${new Date().toISOString()}\n`);
+  process.env.AIHUB_DEBUG_FILE = debugFile;
+}
 const workspace = path.join(root, "workspace");
 
 // Testdateien: eine kleine zum Einfügen, eine große (über 500 KB) für den Datei-Modus.
@@ -148,4 +156,5 @@ for (const [provider, checks] of results) {
   console.log("");
 }
 console.log(failed === 0 ? "Alle Live-Tests bestanden." : `${failed} Live-Test(s) fehlgeschlagen.`);
+if (debug) console.log(`\nRohausgaben der CLIs: ${debugFile}`);
 process.exitCode = failed === 0 ? 0 : 1;

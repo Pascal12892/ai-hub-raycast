@@ -134,6 +134,8 @@ npm run test:live                  # alle drei Anbieter
 npm run test:live -- claude        # nur einen Anbieter
 ```
 
+Mit `npm run test:live -- --debug` werden zusätzlich alle Rohausgaben der CLIs in `~/aihub-debug.txt` geschrieben, hilfreich bei der Fehlersuche. Der Prompt selbst wird nicht protokolliert.
+
 Pro Anbieter werden geprüft: Version, Anmeldung, Antwort mit Umlauten, Rückfrage mit Verlauf, gemeldetes Modell, eingefügte Textdatei, große Datei im Datei-Modus und Abbrechen. Der Test verbraucht etwas Abo-Kontingent und dauert einige Minuten.
 
 ### 3. Manuelle Prüfung in Raycast
