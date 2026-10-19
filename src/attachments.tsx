@@ -1,6 +1,6 @@
 import { Action, ActionPanel, Form, Icon, getSelectedFinderItems, showToast, Toast, useNavigation } from "@raycast/api";
 import { useState } from "react";
-import { MAX_FILE_BYTES, readAttachments, type Attachment } from "./bridge";
+import { MAX_FILE_BYTES, formatSize, readAttachments, type Attachment } from "./bridge";
 
 /** Liest Dateien ein und meldet Fehler als Toast. Gibt null zurück, wenn etwas nicht passt. */
 export function loadAttachments(paths: string[]): Attachment[] | null {
@@ -55,7 +55,7 @@ export function AttachForm(props: { onAttach: (files: Attachment[]) => void }) {
     >
       <Form.FilePicker id="files" title="Dateien" allowMultipleSelection canChooseDirectories={false} error={error} onChange={() => setError(undefined)} />
       <Form.Description
-        text={`Textdateien wie .txt, .md, .csv, .json, .py oder .ts, je Datei höchstens ${MAX_FILE_BYTES / 1000} KB. Bilder, PDFs und Office-Dateien werden noch nicht unterstützt.`}
+        text={`Beliebige Dateien bis ${formatSize(MAX_FILE_BYTES)}, auch PDFs, Bilder und Tabellen. Kleine Textdateien werden direkt in die Frage eingefügt. Größere Dateien und PDFs oder Bilder lesen die Modelle selbst aus einer Kopie, nur lesend.`}
       />
     </Form>
   );

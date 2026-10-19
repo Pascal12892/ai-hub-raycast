@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, openSync, readFileSync, readSync, closeSync, realpathSync, statSync } from "node:fs";
+import { closeSync, copyFileSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,21 +9,47 @@ export type ChatMessage = { role: "user" | "assistant"; text: string };
 export const PROVIDERS: Provider[] = ["gemini", "claude", "codex"];
 export const LABELS: Record<Provider, string> = { gemini: "Gemini", claude: "Claude", codex: "Codex" };
 
-export const SYSTEM_PROMPT = `Antworte im Caveman-Ultra-Stil und in der Sprache der Nutzerfrage. Standard: 1–2 kurze Sätze oder Fragmente, höchstens 35 Wörter. Überschreite das nur, wenn der Nutzer ausdrücklich Details verlangt oder Korrektheit beziehungsweise Sicherheit mehr Text erfordert. Gib ausschließlich die direkte Antwort, notwendige Fakten, Befehle oder Code aus. Keine Begrüßung, Einleitung, Höflichkeitsfloskeln, Beispiele ohne Nachfrage, Wiederholung, Zusammenfassung oder Abschlussformel. Bewahre Zahlen, Bedingungen und Verneinungen exakt. Verändere keine Dateien und führe keine Befehle aus.`;
+export const SYSTEM_PROMPT = `Antworte im Caveman-Ultra-Stil und in der Sprache der Nutzerfrage. Standard: 1–2 kurze Sätze oder Fragmente, höchstens 35 Wörter. Überschreite das nur, wenn der Nutzer ausdrücklich Details verlangt oder Korrektheit beziehungsweise Sicherheit mehr Text erfordert. Gib ausschließlich die direkte Antwort, notwendige Fakten, Befehle oder Code aus. Keine Begrüßung, Einleitung, Höflichkeitsfloskeln, Beispiele ohne Nachfrage, Wiederholung, Zusammenfassung oder Abschlussformel. Bewahre Zahlen, Bedingungen und Verneinungen exakt. Verändere keine Dateien und führe keine Befehle aus, außer lesenden Befehlen für angehängte Dateien im Arbeitsordner.`;
 
 const ANSWER_TIMEOUT_MS = 180_000;
 const MAX_PROMPT_CHARS = 600_000;
 
-export const MAX_FILE_BYTES = 200_000;
-export const MAX_TOTAL_ATTACHMENT_BYTES = 400_000;
-
-export type Attachment = { name: string; path: string; content: string };
+/** Höchstgröße pro Datei und insgesamt. */
+export const MAX_FILE_BYTES = 100_000_000;
+export const MAX_TOTAL_ATTACHMENT_BYTES = 300_000_000;
+/** Kleine Textdateien bis zu dieser Gesamtgröße werden direkt in die Frage eingefügt. Passt auch in das Codex-Kontextfenster. */
+export const INLINE_LIMIT_BYTES = 500_000;
+/** Mehr Zeit, wenn die CLIs große Dateien selbst lesen. */
+const FILE_TIMEOUT_MS = 600_000;
 
 /**
- * Liest Textdateien für den Anhang. Binärdateien (Bilder, PDFs, Office) werden abgelehnt,
- * weil sie als Text eingefügt werden und die CLIs hier ohne Datei-Werkzeuge laufen.
+ * Eine angehängte Datei. content ist gesetzt, wenn sie direkt in die Frage eingefügt wird.
+ * Sonst liest die CLI sie selbst aus einem Arbeitsordner (Datei-Modus).
  */
-export function readAttachments(paths: string[]): Attachment[] {
+export type Attachment = { name: string; path: string; size: number; content?: string };
+
+export function formatSize(bytes: number): string {
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1).replace(".", ",")} MB`;
+  return `${Math.max(1, Math.round(bytes / 1000))} KB`;
+}
+
+function readHead(file: string, bytes = 8000): Buffer {
+  const fd = openSync(file, "r");
+  try {
+    const buffer = Buffer.alloc(bytes);
+    const read = readSync(fd, buffer, 0, bytes, 0);
+    return buffer.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Prüft Dateien und entscheidet, wie sie übergeben werden.
+ * Kleine Textdateien werden eingefügt (schnell, funktioniert überall).
+ * Große Dateien und Binärformate (PDF, Bilder, Office) liest die CLI selbst.
+ */
+export function readAttachments(paths: string[], inlineLimit = INLINE_LIMIT_BYTES): Attachment[] {
   const result: Attachment[] = [];
   let total = 0;
   for (const file of paths) {
@@ -35,14 +61,22 @@ export function readAttachments(paths: string[]): Attachment[] {
       throw new Error(`${name}: Datei nicht gefunden.`);
     }
     if (stat.isDirectory()) throw new Error(`${name} ist ein Ordner. Bitte einzelne Dateien wählen.`);
-    if (stat.size > MAX_FILE_BYTES) throw new Error(`${name} ist zu groß (${Math.round(stat.size / 1000)} KB, höchstens ${MAX_FILE_BYTES / 1000} KB).`);
+    if (stat.size > MAX_FILE_BYTES) throw new Error(`${name} ist zu groß (${formatSize(stat.size)}, höchstens ${formatSize(MAX_FILE_BYTES)}).`);
     total += stat.size;
-    if (total > MAX_TOTAL_ATTACHMENT_BYTES) throw new Error(`Anhänge zusammen zu groß (höchstens ${MAX_TOTAL_ATTACHMENT_BYTES / 1000} KB).`);
-    const buffer = readFileSync(file);
-    if (isBinary(buffer)) throw new Error(`${name} ist keine Textdatei. Bilder, PDFs und Office-Dateien werden noch nicht unterstützt.`);
-    result.push({ name, path: file, content: buffer.toString("utf8") });
+    if (total > MAX_TOTAL_ATTACHMENT_BYTES) throw new Error(`Anhänge zusammen zu groß (höchstens ${formatSize(MAX_TOTAL_ATTACHMENT_BYTES)}).`);
+    result.push({ name, path: file, size: stat.size });
+  }
+  const textTotal = result.reduce((sum, a) => sum + a.size, 0);
+  const allText = result.every((a) => !isBinary(readHead(a.path)));
+  // Nur wenn alle Dateien Text sind und zusammen klein bleiben, wird eingefügt. Sonst einheitlich Datei-Modus.
+  if (allText && textTotal <= inlineLimit) {
+    for (const a of result) a.content = readFileSync(a.path, "utf8");
   }
   return result;
+}
+
+export function needsFileAccess(attachments: Attachment[]): boolean {
+  return attachments.some((a) => a.content === undefined);
 }
 
 export function isBinary(buffer: Buffer): boolean {
@@ -53,16 +87,55 @@ export function isBinary(buffer: Buffer): boolean {
   return head.startsWith("%PDF") || head.startsWith("\x89PNG") || head.startsWith("\xFF\xD8") || head.startsWith("PK") || head.startsWith("GIF8");
 }
 
-/** Hängt Dateiinhalte an die Frage an. Längster Backtick-Zaun wird überboten, damit Code im Anhang nichts bricht. */
+/**
+ * Baut die Frage mit Anhängen. Eingefügte Dateien stehen als Codeblock in der Frage,
+ * große Dateien werden nur benannt und liegen im Arbeitsordner der CLI.
+ */
 export function withAttachments(question: string, attachments: Attachment[]): string {
   if (attachments.length === 0) return question;
+  if (needsFileAccess(attachments)) {
+    const list = attachments.map((a) => `- ${a.name} (${formatSize(a.size)})`).join("\n");
+    return (
+      `${question}\n\nAngehängte Dateien liegen im aktuellen Arbeitsordner:\n${list}\n\n` +
+      "Lies sie mit deinen Lese-Werkzeugen. Bei großen Dateien gezielt suchen statt alles zu laden."
+    );
+  }
   const blocks = attachments.map((a) => {
-    const longest = Math.max(2, ...(a.content.match(/`+/g) ?? []).map((m) => m.length));
+    const content = a.content ?? "";
+    const longest = Math.max(2, ...(content.match(/`+/g) ?? []).map((m) => m.length));
     const fence = "`".repeat(longest + 1);
-    return `Datei: ${a.name}\n${fence}\n${a.content}\n${fence}`;
+    return `Datei: ${a.name}\n${fence}\n${content}\n${fence}`;
   });
   return `${question}\n\nAngehängte Dateien (Inhalt beachten):\n\n${blocks.join("\n\n")}`;
 }
+
+/**
+ * Kopiert die Anhänge in einen eigenen Ordner. Die CLIs bekommen nur diesen Ordner als
+ * Arbeitsordner und sehen so weder die Originale noch andere Dateien. Alte Ordner (älter als 24 h) werden gelöscht.
+ */
+export function prepareFileWorkspace(workspace: string, attachments: Attachment[]): string {
+  const root = path.join(workspace, "files");
+  mkdirSync(root, { recursive: true });
+  for (const entry of readdirSync(root)) {
+    const dir = path.join(root, entry);
+    try {
+      if (Date.now() - statSync(dir).mtimeMs > 24 * 3600_000) rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignorieren */
+    }
+  }
+  const dir = path.join(root, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  mkdirSync(dir);
+  const used = new Set<string>();
+  for (const a of attachments) {
+    let name = a.name;
+    for (let i = 2; used.has(name); i++) name = `${path.parse(a.name).name} (${i})${path.parse(a.name).ext}`;
+    used.add(name);
+    copyFileSync(a.path, path.join(dir, name));
+  }
+  return dir;
+}
+
 const STATUS_TIMEOUT_MS = 15_000;
 
 /** Modellnamen dürfen nur harmlose Zeichen enthalten (kein Leerzeichen, keine Optionen). */
@@ -73,9 +146,15 @@ export function validModel(model: string | undefined): string | undefined {
   return value;
 }
 
-export function argumentsFor(provider: string, model?: string): string[] {
+export function argumentsFor(provider: string, model?: string, fileAccess = false): string[] {
   const chosen = validModel(model);
-  const base = baseArguments(provider);
+  let base = baseArguments(provider);
+  if (fileAccess && provider === "claude") {
+    // Nur lesende Werkzeuge freigeben, und zwar ohne Rückfrage. Alles andere bleibt aus.
+    const index = base.indexOf("--tools");
+    base = [...base.slice(0, index), "--tools", "Read,Grep,Glob", "--allowedTools", "Read", "Grep", "Glob", ...base.slice(index + 2)];
+  }
+  if (fileAccess && provider === "gemini") base = base.map((arg) => (arg === "180s" ? "600s" : arg));
   if (!chosen) return base;
   // Bei Codex muss das Modell vor dem abschließenden "-" (Prompt von stdin) stehen.
   if (provider === "codex") return [...base.slice(0, -1), "--model", chosen, "-"];
@@ -498,6 +577,8 @@ export type RunRequest = {
   prompt: string;
   history?: ChatMessage[];
   workspace: string;
+  /** Ordner mit kopierten Anhängen. Ist er gesetzt, arbeitet die CLI darin und darf Dateien lesen. */
+  filesDir?: string;
   customPaths?: CustomPaths;
   model?: string;
   signal?: AbortSignal;
@@ -506,7 +587,8 @@ export type RunRequest = {
 export type RunResult = { text: string; model?: string };
 
 export async function run(request: RunRequest): Promise<RunResult> {
-  const args = argumentsFor(request.provider, request.model);
+  const fileAccess = Boolean(request.filesDir);
+  const args = argumentsFor(request.provider, request.model, fileAccess);
   if (typeof request.prompt !== "string" || !request.prompt.trim()) throw new Error("Frage fehlt.");
   const prompt = buildPrompt(request.prompt, Array.isArray(request.history) ? request.history : []);
   if (prompt.length > MAX_PROMPT_CHARS) throw new Error("Gespräch zu lang. Bitte ein neues Gespräch beginnen.");
@@ -523,12 +605,12 @@ export async function run(request: RunRequest): Promise<RunResult> {
   env.USER ||= user.username;
   env.LOGNAME ||= user.username;
   env.SHELL ||= user.shell || "/bin/zsh";
-  const options: Options = { cwd: request.workspace, env, signal: request.signal };
+  const options: Options = { cwd: request.filesDir ?? request.workspace, env, signal: request.signal };
 
   await assertSubscriptionAuth(request.provider, command, prefix, options);
 
   const input = request.provider === "gemini" ? JSON.stringify({ event: "user", message: { content: prompt } }) + "\n" : prompt;
-  const { code, stdout, stderr } = await execute(command, [...prefix, ...args], input, options, ANSWER_TIMEOUT_MS, 4_000_000);
+  const { code, stdout, stderr } = await execute(command, [...prefix, ...args], input, options, fileAccess ? FILE_TIMEOUT_MS : ANSWER_TIMEOUT_MS, 4_000_000);
   if (code !== 0) {
     if (stdout.trim()) {
       try {

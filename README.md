@@ -63,7 +63,12 @@ Dateien gehen mit der nächsten Frage an alle gewählten Anbieter.
 
 Ohne eingetippte Frage werden die Dateien zusammengefasst. Rückfragen beziehen sich weiter auf die Dateien.
 
-Unterstützt sind Textdateien (z. B. .txt, .md, .csv, .json, .py, .ts), je Datei höchstens 200 KB und zusammen höchstens 400 KB. Der Inhalt wird als Text in die Frage eingefügt. Bilder, PDFs und Office-Dateien werden noch nicht unterstützt.
+Erlaubt sind Dateien bis 100 MB, zusammen bis 300 MB, auch PDFs, Bilder und Tabellen. Es gibt zwei Wege:
+
+- **Kleine Textdateien** (zusammen bis 500 KB) werden direkt in die Frage eingefügt. Das ist schnell und klappt bei allen drei Anbietern gleich.
+- **Größere Dateien, PDFs und Bilder** werden in einen eigenen Ordner kopiert. Die CLIs arbeiten in diesem Ordner und lesen die Dateien selbst. Claude bekommt dafür nur die Lese-Werkzeuge Read, Grep und Glob, Codex läuft in der Read-only-Sandbox, Gemini im Plan-Modus mit Sandbox. Die Originale werden nicht angefasst. Das Zeitlimit steigt in diesem Fall auf 10 Minuten. Die Kopien werden nach 24 Stunden gelöscht.
+
+Bei sehr großen Dateien lesen die Modelle nicht alles, sondern suchen gezielt. Wie gut das klappt, hängt vom Anbieter und Dateityp ab. Claude kann PDFs und Bilder direkt lesen. Ob Codex und Gemini Bilder und PDFs aus dem Ordner auswerten, hängt von deren CLI-Version ab.
 
 ## Modelle wählen
 

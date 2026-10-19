@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
   SYSTEM_PROMPT,
   CLAUDE_GROUPS,
   readAttachments,
+  needsFileAccess,
+  prepareFileWorkspace,
   withAttachments,
   parseModel,
   groupGeminiModels,
@@ -171,24 +173,60 @@ test("tatsächlich genutztes Modell wird aus der Ausgabe gelesen", () => {
   assert.equal(parseModel("codex", '{"type":"thread.started"}'), undefined);
 });
 
-test("Textdateien werden angehängt, Binärdateien und zu große Dateien abgelehnt", () => {
+test("kleine Textdateien werden eingefügt, große oder binäre Dateien im Datei-Modus übergeben", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "aihub-"));
   const text = path.join(dir, "notizen.md");
   writeFileSync(text, "# Titel\n```py\nprint(1)\n```\nÄÖÜ");
   const png = path.join(dir, "bild.png");
   writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]));
-  const big = path.join(dir, "gross.txt");
-  writeFileSync(big, "x".repeat(250_000));
+  const big = path.join(dir, "gross.csv");
+  writeFileSync(big, "a,b\n".repeat(200_000));
 
-  const [attachment] = readAttachments([text]);
-  assert.equal(attachment.name, "notizen.md");
-  const prompt = withAttachments("Fass zusammen", [attachment]);
-  assert.match(prompt, /^Fass zusammen/);
+  const [small] = readAttachments([text]);
+  assert.ok(small.content);
+  const prompt = withAttachments("Fass zusammen", [small]);
   assert.match(prompt, /Datei: notizen.md\n````\n# Titel/);
   assert.match(prompt, /ÄÖÜ\n````$/);
   assert.equal(withAttachments("Nur Frage", []), "Nur Frage");
 
-  assert.throws(() => readAttachments([png]), /keine Textdatei/);
-  assert.throws(() => readAttachments([big]), /zu groß/);
+  // Bild: Datei-Modus, auch zusammen mit einer kleinen Textdatei.
+  const mixed = readAttachments([text, png]);
+  assert.ok(needsFileAccess(mixed));
+  assert.ok(mixed.every((a) => a.content === undefined));
+  const filePrompt = withAttachments("Was ist darauf?", mixed);
+  assert.match(filePrompt, /- bild.png \(1 KB\)/);
+  assert.doesNotMatch(filePrompt, /print\(1\)/);
+
+  // Große Textdatei: Datei-Modus statt Einfügen.
+  assert.ok(needsFileAccess(readAttachments([big])));
   assert.throws(() => readAttachments([dir]), /Ordner/);
+
+  const workspace = path.join(dir, "ws");
+  const copyDir = prepareFileWorkspace(workspace, mixed);
+  assert.deepEqual(readdirSync(copyDir).sort(), ["bild.png", "notizen.md"]);
+});
+
+test("Datei-Modus gibt Claude nur Lese-Werkzeuge und Gemini mehr Zeit", () => {
+  const claude = argumentsFor("claude", undefined, true);
+  assert.equal(claude[claude.indexOf("--tools") + 1], "Read,Grep,Glob");
+  assert.ok(!claude.includes("Bash") && !claude.includes("Edit"));
+  assert.equal(argumentsFor("claude")[argumentsFor("claude").indexOf("--tools") + 1], "");
+  assert.ok(argumentsFor("gemini", undefined, true).includes("600s"));
+  assert.deepEqual(argumentsFor("codex", undefined, true), argumentsFor("codex"));
+});
+
+test("im Datei-Modus läuft die CLI im Ordner mit den kopierten Anhängen", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "aihub-"));
+  const file = fakeClaude(
+    dir,
+    `process.stdin.resume(); process.stdin.on("end", () => {
+       const tools = args[args.indexOf("--tools") + 1];
+       console.log(JSON.stringify({ result: require("fs").readdirSync(".").join(",") + "|" + tools, is_error: false }));
+     });`,
+  );
+  const source = path.join(dir, "daten.csv");
+  writeFileSync(source, "x");
+  const filesDir = prepareFileWorkspace(path.join(dir, "ws"), [{ name: "daten.csv", path: source, size: 1 }]);
+  const answer = await run({ provider: "claude", prompt: "Lies", workspace: path.join(dir, "ws"), filesDir, customPaths: { claude: file } });
+  assert.equal(answer.text, "daten.csv|Read,Grep,Glob");
 });

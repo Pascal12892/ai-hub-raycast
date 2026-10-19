@@ -1,8 +1,19 @@
 import { Action, ActionPanel, Color, Icon, Keyboard, List, environment, getPreferenceValues, openExtensionPreferences, showToast, Toast } from "@raycast/api";
 import path from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LABELS, run, withAttachments, type Attachment, type ChatMessage, type CustomPaths, type Provider } from "./bridge";
-import { AttachForm, attachFinderSelection } from "./attachments";
+import {
+  LABELS,
+  formatSize,
+  needsFileAccess,
+  prepareFileWorkspace,
+  run,
+  withAttachments,
+  type Attachment,
+  type ChatMessage,
+  type CustomPaths,
+  type Provider,
+} from "./bridge";
+import { AttachForm, attachFinderSelection, loadAttachments } from "./attachments";
 import { ModelSubmenu, loadModels, saveModel, type ModelChoice } from "./model-menu";
 
 type Preferences = { claudePath?: string; codexPath?: string; agyPath?: string };
@@ -98,6 +109,8 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
+  /** Ordner mit kopierten Anhängen. Bleibt für Rückfragen im selben Gespräch bestehen. */
+  const filesDirRef = useRef<string | undefined>(undefined);
 
   const update = (provider: Provider, change: (s: ProviderState) => ProviderState) => setStates((prev) => ({ ...prev, [provider]: change(prev[provider]) }));
 
@@ -107,22 +120,31 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
       const question = raw.trim() || (files.length ? "Bitte die angehängten Dateien zusammenfassen." : "");
       if (!question) return;
       const prompt = withAttachments(question, files);
-      const shown = files.length ? `${question}\n\n📎 ${files.map((f) => f.name).join(", ")}` : question;
+      const shown = files.length ? `${question}\n\n📎 ${files.map((f) => `${f.name} (${formatSize(f.size)})`).join(", ")}` : question;
       if (providers.some((p) => statesRef.current[p].status === "running")) {
         showToast({ style: Toast.Style.Failure, title: "Es läuft noch eine Anfrage", message: "Erst abbrechen oder warten." });
         return;
       }
+      const workspace = path.join(environment.supportPath, "Workspace");
+      if (needsFileAccess(files)) {
+        try {
+          filesDirRef.current = prepareFileWorkspace(workspace, files);
+        } catch (error) {
+          showToast({ style: Toast.Style.Failure, title: "Dateien konnten nicht vorbereitet werden", message: (error as Error).message });
+          return;
+        }
+      }
+      const filesDir = filesDirRef.current;
       setSearchText("");
       setAttachments([]);
       const paths = customPaths();
-      const workspace = path.join(environment.supportPath, "Workspace");
       for (const provider of providers) {
         const controller = new AbortController();
         controllers.current.set(provider, controller);
         const history = statesRef.current[provider].history;
         const requested = modelsRef.current[provider];
         update(provider, (s) => ({ ...s, status: "running", question: shown, error: undefined }));
-        run({ provider, prompt, history, workspace, customPaths: paths, model: requested, signal: controller.signal })
+        run({ provider, prompt, history, workspace, filesDir, customPaths: paths, model: requested, signal: controller.signal })
           .then(({ text, model }) =>
             update(provider, (s) => ({
               ...s,
@@ -151,6 +173,7 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
 
   const reset = () => {
     cancel();
+    filesDirRef.current = undefined;
     setStates(emptyState(providers));
   };
 
@@ -217,15 +240,15 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
   const target = providers.length > 1 ? "alle drei" : LABELS[providers[0]];
 
   const addAttachments = (files: Attachment[]) => {
-    setAttachments((prev) => {
-      const byPath = new Map(prev.map((f) => [f.path, f]));
-      for (const f of files) byPath.set(f.path, f);
-      return [...byPath.values()];
-    });
+    // Alle Anhänge gemeinsam neu bewerten, damit die Grenze fürs Einfügen für die Summe gilt.
+    const paths = [...new Set([...attachmentsRef.current.map((f) => f.path), ...files.map((f) => f.path)])];
+    const merged = loadAttachments(paths);
+    if (!merged) return;
+    setAttachments(merged);
     showToast({
       style: Toast.Style.Success,
       title: `${files.length === 1 ? files[0].name : `${files.length} Dateien`} angehängt`,
-      message: "Geht mit der nächsten Frage mit.",
+      message: needsFileAccess(merged) ? "Die Modelle lesen die Dateien selbst, das kann etwas dauern." : "Geht mit der nächsten Frage mit.",
     });
   };
 
