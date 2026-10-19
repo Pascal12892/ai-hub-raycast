@@ -58,7 +58,7 @@ Alle drei Anbieter bekommen denselben Caveman-Ultra-Stilprompt wie das Original:
 Im Aktionsmenü (Cmd+K) gibt es pro Anbieter den Eintrag „Modell wählen“, direkt erreichbar mit **Cmd+M**. Im Befehl „Alle fragen“ öffnet Cmd+M ein Menü mit allen drei Anbietern, der markierte steht oben.
 
 - **Standard:** Die CLI nutzt ihr voreingestelltes Modell.
-- **Claude:** Vorschläge `fable`, `opus`, `sonnet`, `haiku`. Volle Namen wie `claude-opus-5-5` gehen über „Eigenes Modell eingeben…“.
+- **Claude:** Aliase `fable`, `opus`, `sonnet`, `haiku` zeigen immer auf die neueste Version. Darunter stehen feste Versionen wie `claude-opus-5-5`, `claude-opus-5` oder `claude-opus-4-8`. Weitere Namen gehen über „Eigenes Modell eingeben…“.
 - **Gemini:** Die Liste kommt live aus `agy models`.
 - **Codex:** Modellname über „Eigenes Modell eingeben…“, zuletzt genutzte Modelle erscheinen danach im Menü.
 

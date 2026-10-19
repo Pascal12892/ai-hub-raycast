@@ -33,7 +33,23 @@ export function argumentsFor(provider: string, model?: string): string[] {
 
 /** Vorschläge im Menü. Gemini wird zusätzlich live über `agy models` abgefragt. */
 export const MODEL_PRESETS: Record<Provider, string[]> = {
-  claude: ["fable", "opus", "sonnet", "haiku"],
+  // Aliase zeigen immer auf die neueste Version. Volle Namen wählen eine bestimmte Version.
+  // Stand Oktober 2026, aktive Modelle laut Anthropic-Doku (Model deprecations).
+  claude: [
+    "fable",
+    "opus",
+    "sonnet",
+    "haiku",
+    "claude-fable-5-1",
+    "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-opus-4-5-20251101",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+  ],
   gemini: [],
   codex: [],
 };
