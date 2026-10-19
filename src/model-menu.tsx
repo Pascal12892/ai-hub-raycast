@@ -1,6 +1,6 @@
 import { Action, ActionPanel, Form, Icon, LocalStorage, showToast, Toast, useNavigation } from "@raycast/api";
 import { useState } from "react";
-import { LABELS, MODEL_PRESETS, listModels, validModel, type CustomPaths, type Provider } from "./bridge";
+import { CLAUDE_GROUPS, LABELS, listModels, validModel, type CustomPaths, type ModelGroup, type Provider } from "./bridge";
 
 export type ModelChoice = Record<Provider, string>;
 
@@ -83,30 +83,49 @@ export function ModelSubmenu(props: {
   shortcut?: boolean;
 }) {
   const { provider, current, recent, onSelect } = props;
-  const [listed, setListed] = useState<string[] | undefined>(provider === "gemini" ? undefined : MODEL_PRESETS[provider]);
+  const [groups, setGroups] = useState<ModelGroup[] | undefined>(provider === "claude" ? CLAUDE_GROUPS : provider === "codex" ? [] : undefined);
 
   const load = () => {
-    if (listed !== undefined) return;
-    setListed([]);
+    if (groups !== undefined) return;
+    setGroups([]);
     listModels(provider, props.customPaths)
-      .then((models) => setListed(models))
+      .then((result) => setGroups(result))
       .catch((error: Error) => showToast({ style: Toast.Style.Failure, title: "Modellliste nicht verfügbar", message: error.message }));
   };
 
-  const options = [...new Set([...(listed ?? []), ...recent, ...(current ? [current] : [])])];
+  const known = new Set((groups ?? []).flatMap((g) => g.options.map((o) => o.value)));
+  // Eigene oder zuletzt genutzte Modelle, die in keiner Familie stehen.
+  const extra = [...new Set([...recent, ...(current ? [current] : [])])].filter((m) => !known.has(m));
   const mark = (model: string) => (model === current ? Icon.CheckCircle : Icon.Circle);
+  const labelOf = (model: string) => (groups ?? []).flatMap((g) => g.options).find((o) => o.value === model)?.label ?? model;
 
   return (
     <ActionPanel.Submenu
-      title={props.title ?? `Modell wählen (${current || "Standard"})`}
+      title={props.title ?? `Modell wählen (${current ? labelOf(current) : "Standard"})`}
       icon={Icon.ComputerChip}
       shortcut={props.shortcut ? { modifiers: ["cmd"], key: "m" } : undefined}
       onOpen={load}
     >
       <Action title="Standard" icon={mark("")} onAction={() => onSelect("")} />
-      {options.map((model) => (
-        <Action key={model} title={model} icon={mark(model)} onAction={() => onSelect(model)} />
-      ))}
+      {(groups ?? []).map((group) =>
+        // Eine Familie mit nur einem Modell braucht kein eigenes Untermenü.
+        group.options.length === 1 ? (
+          <Action key={group.title} title={group.options[0].label} icon={mark(group.options[0].value)} onAction={() => onSelect(group.options[0].value)} />
+        ) : (
+          <ActionPanel.Submenu key={group.title} title={group.title} icon={group.options.some((o) => o.value === current) ? Icon.CheckCircle : Icon.Folder}>
+            {group.options.map((option) => (
+              <Action key={option.value} title={option.label} icon={mark(option.value)} onAction={() => onSelect(option.value)} />
+            ))}
+          </ActionPanel.Submenu>
+        ),
+      )}
+      {extra.length > 0 ? (
+        <ActionPanel.Section title="Eigene Modelle">
+          {extra.map((model) => (
+            <Action key={model} title={model} icon={mark(model)} onAction={() => onSelect(model)} />
+          ))}
+        </ActionPanel.Section>
+      ) : null}
       <Action.Push title="Eigenes Modell eingeben…" icon={Icon.Pencil} target={<CustomModelForm provider={provider} current={current} onSelect={onSelect} />} />
     </ActionPanel.Submenu>
   );

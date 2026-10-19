@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import {
   SYSTEM_PROMPT,
+  CLAUDE_GROUPS,
+  groupGeminiModels,
   argumentsFor,
   parseModelList,
   buildPrompt,
@@ -135,4 +137,21 @@ test("Modellauswahl wird an die richtige Stelle gesetzt und geprüft", () => {
 test("Modellliste von agy wird ausgelesen", () => {
   const output = "Available models:\n  * gemini-4-argon-high (default)\n  - gemini-3.8-flash-medium  Fast\ngemini-3.1-pro-high\nModel   Description\n";
   assert.deepEqual(parseModelList(output), ["gemini-4-argon-high", "gemini-3.8-flash-medium", "gemini-3.1-pro-high"]);
+});
+
+test("Modelle werden nach Familie gruppiert", () => {
+  assert.deepEqual(
+    CLAUDE_GROUPS.map((g) => g.title),
+    ["Fable", "Opus", "Sonnet", "Haiku"],
+  );
+  for (const group of CLAUDE_GROUPS) for (const option of group.options) assert.ok(argumentsFor("claude", option.value));
+  const groups = groupGeminiModels(["gemini-4-argon-high", "gemini-3.1-pro-high", "gemini-3.1-pro-low", "other-model"]);
+  assert.deepEqual(
+    groups.map((g) => [g.title, g.options.length]),
+    [
+      ["Argon", 1],
+      ["Pro", 2],
+      ["Weitere", 1],
+    ],
+  );
 });

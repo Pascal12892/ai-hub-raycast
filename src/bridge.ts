@@ -31,28 +31,62 @@ export function argumentsFor(provider: string, model?: string): string[] {
   return [...base, "--model", chosen];
 }
 
-/** Vorschläge im Menü. Gemini wird zusätzlich live über `agy models` abgefragt. */
-export const MODEL_PRESETS: Record<Provider, string[]> = {
-  // Aliase zeigen immer auf die neueste Version. Volle Namen wählen eine bestimmte Version.
-  // Stand Oktober 2026, aktive Modelle laut Anthropic-Doku (Model deprecations).
-  claude: [
-    "fable",
-    "opus",
-    "sonnet",
-    "haiku",
-    "claude-fable-5-1",
-    "claude-opus-5-5",
-    "claude-opus-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-opus-4-5-20251101",
-    "claude-sonnet-5-5",
-    "claude-haiku-5-5",
-  ],
-  gemini: [],
-  codex: [],
-};
+export type ModelOption = { value: string; label: string };
+export type ModelGroup = { title: string; options: ModelOption[] };
+
+/**
+ * Claude-Modelle nach Familie. Der Alias zeigt immer auf die neueste Version,
+ * die vollen Namen wählen eine feste Version.
+ * Stand Oktober 2026, aktive Modelle laut Anthropic-Doku (Model deprecations).
+ */
+export const CLAUDE_GROUPS: ModelGroup[] = [
+  {
+    title: "Fable",
+    options: [
+      { value: "fable", label: "Neueste (fable)" },
+      { value: "claude-fable-5-1", label: "Fable 5.1" },
+    ],
+  },
+  {
+    title: "Opus",
+    options: [
+      { value: "opus", label: "Neueste (opus)" },
+      { value: "claude-opus-5-5", label: "Opus 5.5" },
+      { value: "claude-opus-5", label: "Opus 5" },
+      { value: "claude-opus-4-8", label: "Opus 4.8" },
+      { value: "claude-opus-4-7", label: "Opus 4.7" },
+      { value: "claude-opus-4-6", label: "Opus 4.6" },
+      { value: "claude-opus-4-5-20251101", label: "Opus 4.5" },
+    ],
+  },
+  {
+    title: "Sonnet",
+    options: [
+      { value: "sonnet", label: "Neueste (sonnet)" },
+      { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
+    ],
+  },
+  {
+    title: "Haiku",
+    options: [
+      { value: "haiku", label: "Neueste (haiku)" },
+      { value: "claude-haiku-5-5", label: "Haiku 5.5" },
+    ],
+  },
+];
+
+/** Gruppiert Gemini-Slugs nach Familie, z. B. gemini-3.1-pro-high → „Pro“. */
+export function groupGeminiModels(slugs: string[]): ModelGroup[] {
+  const groups = new Map<string, ModelOption[]>();
+  for (const slug of slugs) {
+    const parts = slug.split("-");
+    const family = parts.length >= 3 && parts[0] === "gemini" ? parts[2] : "Weitere";
+    const title = family.charAt(0).toUpperCase() + family.slice(1);
+    if (!groups.has(title)) groups.set(title, []);
+    groups.get(title)!.push({ value: slug, label: slug });
+  }
+  return [...groups].map(([title, options]) => ({ title, options }));
+}
 
 /** Liest Modell-Slugs aus der Ausgabe von `agy models`. */
 export function parseModelList(output: string): string[] {
@@ -429,14 +463,15 @@ export async function run(request: RunRequest): Promise<string> {
   return answer;
 }
 
-/** Fragt die verfügbaren Modelle ab. Nur Gemini (agy models) bietet eine Liste, sonst Vorschläge. */
-export async function listModels(provider: Provider, customPaths: CustomPaths = {}): Promise<string[]> {
-  if (provider !== "gemini") return MODEL_PRESETS[provider];
+/** Modellgruppen für das Menü. Gemini wird live über `agy models` abgefragt. */
+export async function listModels(provider: Provider, customPaths: CustomPaths = {}): Promise<ModelGroup[]> {
+  if (provider === "claude") return CLAUDE_GROUPS;
+  if (provider === "codex") return [];
   const shellDirs = loginShellDirectories();
   const [command, prefix] = resolveExecutable(provider, customPaths, process.env, shellDirs);
   const env = cleanEnvironment(process.env);
   env.PATH = [path.dirname(process.execPath), ...searchDirectories(process.env, os.homedir(), shellDirs)].join(path.delimiter);
   const { code, stdout, stderr } = await execute(command, [...prefix, "models"], null, { cwd: os.homedir(), env }, STATUS_TIMEOUT_MS, 200_000);
   if (code !== 0) throw new Error(summarizeCliFailure(stderr, stdout, code));
-  return parseModelList(stdout);
+  return groupGeminiModels(parseModelList(stdout));
 }
