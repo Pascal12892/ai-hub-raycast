@@ -7,12 +7,22 @@ import { ModelSubmenu, loadModels, saveModel, type ModelChoice } from "./model-m
 type Preferences = { claudePath?: string; codexPath?: string; agyPath?: string };
 
 type Status = "idle" | "running" | "done" | "error" | "cancelled";
-type ProviderState = { status: Status; question?: string; answer?: string; error?: string; history: ChatMessage[] };
+type ProviderState = {
+  status: Status;
+  question?: string;
+  answer?: string;
+  error?: string;
+  history: ChatMessage[];
+  /** Modellangabe je beantworteter Frage, parallel zu den Antworten in history. */
+  modelNotes: string[];
+  /** Zuletzt tatsächlich genutztes Modell, falls die CLI es meldet. */
+  usedModel?: string;
+};
 
 const ICONS: Record<Provider, string> = { gemini: "gemini.png", claude: "claude.png", codex: "codex.png" };
 
 function emptyState(providers: Provider[]): Record<string, ProviderState> {
-  return Object.fromEntries(providers.map((p) => [p, { status: "idle", history: [] } satisfies ProviderState]));
+  return Object.fromEntries(providers.map((p) => [p, { status: "idle", history: [], modelNotes: [] } satisfies ProviderState]));
 }
 
 function customPaths(): CustomPaths {
@@ -23,12 +33,22 @@ function customPaths(): CustomPaths {
 function markdownFor(state: ProviderState): string {
   const parts: string[] = [];
   for (let i = 0; i + 1 < state.history.length; i += 2) {
-    parts.push(`**Du:** ${state.history[i].text}\n\n${state.history[i + 1].text}`);
+    const note = state.modelNotes[i / 2];
+    parts.push(`**Du:** ${state.history[i].text}\n\n${state.history[i + 1].text}${note ? `\n\n_${note}_` : ""}`);
   }
   if (state.status === "running") parts.push(`**Du:** ${state.question}\n\n_Antwort läuft…_`);
   if (state.status === "error") parts.push(`**Du:** ${state.question}\n\n**Fehler:** ${state.error}`);
   if (state.status === "cancelled") parts.push(`**Du:** ${state.question}\n\n_Abgebrochen._`);
   return parts.join("\n\n---\n\n") || "_Noch keine Anfrage._";
+}
+
+/** Text unter jeder Antwort: welches Modell gemeldet wurde und ob es zur Auswahl passt. */
+function modelNote(label: string, requested: string, used: string | undefined): string {
+  if (used) {
+    if (!requested) return `Modell: ${used} (Standard, von ${label} gemeldet)`;
+    return `Modell: ${used} (gewählt: ${requested}, von ${label} gemeldet)`;
+  }
+  return `Modell: ${requested || "Standard"} (gewählt, ${label} meldet das genutzte Modell nicht)`;
 }
 
 function subtitleFor(state: ProviderState): string {
@@ -40,7 +60,7 @@ function subtitleFor(state: ProviderState): string {
 }
 
 function accessoryFor(status: Status, model: string): List.Item.Accessory[] {
-  const tag: List.Item.Accessory[] = model ? [{ tag: model, tooltip: "Gewähltes Modell" }] : [];
+  const tag: List.Item.Accessory[] = model ? [{ tag: model, tooltip: "Modell (nach einer Antwort das gemeldete)" }] : [];
   return [...tag, ...statusAccessory(status)];
 }
 
@@ -90,14 +110,17 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
         const controller = new AbortController();
         controllers.current.set(provider, controller);
         const history = statesRef.current[provider].history;
+        const requested = modelsRef.current[provider];
         update(provider, (s) => ({ ...s, status: "running", question, error: undefined }));
-        run({ provider, prompt: question, history, workspace, customPaths: paths, model: modelsRef.current[provider], signal: controller.signal })
-          .then((answer) =>
+        run({ provider, prompt: question, history, workspace, customPaths: paths, model: requested, signal: controller.signal })
+          .then(({ text, model }) =>
             update(provider, (s) => ({
               ...s,
               status: "done",
-              answer,
-              history: [...s.history, { role: "user", text: question }, { role: "assistant", text: answer }],
+              answer: text,
+              usedModel: model,
+              modelNotes: [...s.modelNotes, modelNote(LABELS[provider], requested, model)],
+              history: [...s.history, { role: "user", text: question }, { role: "assistant", text }],
             })),
           )
           .catch((error: Error) =>
@@ -235,7 +258,7 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
               title={LABELS[provider]}
               subtitle={subtitleFor(state)}
               icon={ICONS[provider]}
-              accessories={accessoryFor(state.status, models[provider])}
+              accessories={accessoryFor(state.status, state.status === "done" && state.usedModel ? state.usedModel : models[provider])}
               detail={<List.Item.Detail markdown={markdownFor(state)} />}
               actions={
                 <ActionPanel>

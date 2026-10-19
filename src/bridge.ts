@@ -276,6 +276,34 @@ export function parseAnswer(provider: Provider, stdout: string): string {
   return obj.result;
 }
 
+/**
+ * Liest aus der CLI-Ausgabe, welches Modell tatsächlich geantwortet hat.
+ * Claude meldet das in modelUsage, Gemini und Codex je nach Version in einem Feld "model".
+ * Gibt undefined zurück, wenn die CLI nichts meldet.
+ */
+export function parseModel(provider: Provider, stdout: string): string | undefined {
+  try {
+    if (provider === "claude") {
+      const usage = JSON.parse(stdout).modelUsage as Record<string, { outputTokens?: number }> | undefined;
+      if (!usage) return undefined;
+      // Claude Code nutzt intern teils ein kleines Hilfsmodell. Das Hauptmodell hat die meisten Ausgabe-Tokens.
+      return Object.entries(usage).sort((a, b) => (b[1]?.outputTokens ?? 0) - (a[1]?.outputTokens ?? 0))[0]?.[0];
+    }
+    let found: string | undefined;
+    const visit = (value: unknown, depth: number) => {
+      if (!value || typeof value !== "object" || depth > 4) return;
+      for (const [key, inner] of Object.entries(value)) {
+        if (/^model(_?(name|slug|id))?$/i.test(key) && typeof inner === "string" && inner.trim()) found = inner.trim();
+        else visit(inner, depth + 1);
+      }
+    };
+    for (const line of stdout.split(/\r?\n/).filter(Boolean)) visit(JSON.parse(line), 0);
+    return found;
+  } catch {
+    return undefined;
+  }
+}
+
 export function summarizeCliFailure(stderr: string, stdout: string, code: number | null): string {
   const combined = `${stderr}\n${stdout}`;
   const reason = combined.match(/reasonMessage:\s*'([^']+)'/);
@@ -424,7 +452,9 @@ export type RunRequest = {
   signal?: AbortSignal;
 };
 
-export async function run(request: RunRequest): Promise<string> {
+export type RunResult = { text: string; model?: string };
+
+export async function run(request: RunRequest): Promise<RunResult> {
   const args = argumentsFor(request.provider, request.model);
   if (typeof request.prompt !== "string" || !request.prompt.trim()) throw new Error("Frage fehlt.");
   const prompt = buildPrompt(request.prompt, Array.isArray(request.history) ? request.history : []);
@@ -460,7 +490,7 @@ export async function run(request: RunRequest): Promise<string> {
   }
   const answer = parseAnswer(request.provider, stdout);
   if (!answer) throw new Error("Keine Textantwort erhalten.");
-  return answer;
+  return { text: answer, model: parseModel(request.provider, stdout) };
 }
 
 /** Modellgruppen für das Menü. Gemini wird live über `agy models` abgefragt. */

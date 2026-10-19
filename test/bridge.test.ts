@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   SYSTEM_PROMPT,
   CLAUDE_GROUPS,
+  parseModel,
   groupGeminiModels,
   argumentsFor,
   parseModelList,
@@ -109,7 +110,7 @@ test("kompletter Ablauf mit gefälschter CLI liefert die Antwort", async () => {
      });`,
   );
   const answer = await run({ provider: "claude", prompt: "Wie spät?", workspace: path.join(dir, "ws"), customPaths: { claude: file } });
-  assert.equal(answer, "Spät.");
+  assert.equal(answer.text, "Spät.");
 });
 
 test("Abbrechen beendet den Prozess", async () => {
@@ -154,4 +155,16 @@ test("Modelle werden nach Familie gruppiert", () => {
       ["Weitere", 1],
     ],
   );
+});
+
+test("tatsächlich genutztes Modell wird aus der Ausgabe gelesen", () => {
+  const claude = JSON.stringify({ result: "x", modelUsage: { "claude-haiku-5-5": { outputTokens: 3 }, "claude-opus-5-5": { outputTokens: 120 } } });
+  assert.equal(parseModel("claude", claude), "claude-opus-5-5");
+  assert.equal(parseModel("claude", '{"result":"x"}'), undefined);
+  const gemini = [
+    { event: "init", init: { model: "gemini-3.1-pro-high" } },
+    { event: "result", result: { status: "SUCCESS", response: "x" } },
+  ];
+  assert.equal(parseModel("gemini", gemini.map((e) => JSON.stringify(e)).join("\n")), "gemini-3.1-pro-high");
+  assert.equal(parseModel("codex", '{"type":"thread.started"}'), undefined);
 });

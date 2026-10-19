@@ -64,6 +64,8 @@ Im Aktionsmenü (Cmd+K) gibt es pro Anbieter den Eintrag „Modell wählen“, d
 
 Die Wahl wird gespeichert und gilt ab der nächsten Frage. Das gewählte Modell steht als Etikett neben dem Anbieter.
 
+Unter jeder Antwort steht, welches Modell tatsächlich geantwortet hat, sofern die CLI das meldet. Claude meldet es immer. Meldet eine CLI nichts, steht dort das gewählte Modell mit einem Hinweis.
+
 ## Einstellungen
 
 Raycast startet Erweiterungen nicht mit dem PATH deiner Shell. Die Erweiterung sucht die CLIs deshalb selbst an den üblichen Orten (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.bun/bin` und weitere).
