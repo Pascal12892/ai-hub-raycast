@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, openSync, readSync, closeSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -58,20 +58,49 @@ export function cleanEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env;
 }
 
-/** Ordner, in denen CLIs auf dem Mac typischerweise liegen. Raycast startet ohne das PATH der Shell. */
-export function searchDirectories(env: NodeJS.ProcessEnv = process.env, home = os.homedir()): string[] {
+/**
+ * PATH aus der Login-Shell des Nutzers, also dasselbe wie im Terminal.
+ * Raycast startet Erweiterungen ohne dieses PATH. Ergebnis wird zwischengespeichert.
+ */
+let cachedShellDirs: string[] | undefined;
+export function loginShellDirectories(): string[] {
+  if (cachedShellDirs) return cachedShellDirs;
+  cachedShellDirs = [];
+  const shell = process.env.SHELL || "/bin/zsh";
+  try {
+    const output = execFileSync(shell, ["-lc", 'printf "\n__AIHUB_PATH__%s" "$PATH"'], {
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const marker = output.lastIndexOf("__AIHUB_PATH__");
+    if (marker >= 0)
+      cachedShellDirs = output
+        .slice(marker + "__AIHUB_PATH__".length)
+        .trim()
+        .split(path.delimiter)
+        .filter(Boolean);
+  } catch {
+    /* Shell nicht nutzbar, feste Ordnerliste reicht */
+  }
+  return cachedShellDirs;
+}
+
+/** Ordner, in denen CLIs auf dem Mac typischerweise liegen. Reihenfolge: Terminal-PATH, Installer-Ordner, Rest. */
+export function searchDirectories(env: NodeJS.ProcessEnv = process.env, home = os.homedir(), shellDirs: string[] = []): string[] {
   const dirs = [
-    ...(env.PATH || "").split(path.delimiter),
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
+    ...shellDirs,
     path.join(home, ".local", "bin"),
     path.join(home, ".claude", "local"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
     path.join(home, ".npm-global", "bin"),
     path.join(home, ".bun", "bin"),
     path.join(home, ".volta", "bin"),
     path.join(home, ".antigravity", "bin"),
     path.join(home, ".agy", "bin"),
     path.join(home, "Library", "pnpm"),
+    ...(env.PATH || "").split(path.delimiter),
     "/usr/bin",
     "/bin",
   ];
@@ -110,11 +139,16 @@ function needsNode(file: string): boolean {
 
 export type CustomPaths = Partial<Record<Provider, string>>;
 
-export function resolveExecutable(provider: Provider, custom: CustomPaths = {}, env: NodeJS.ProcessEnv = process.env): [string, string[]] {
+export function resolveExecutable(
+  provider: Provider,
+  custom: CustomPaths = {},
+  env: NodeJS.ProcessEnv = process.env,
+  shellDirs: string[] = [],
+): [string, string[]] {
   const candidates: string[] = [];
   const configured = custom[provider]?.trim();
   if (configured) candidates.push(configured.replace(/^~(?=\/|$)/, os.homedir()));
-  for (const dir of searchDirectories(env)) candidates.push(path.join(dir, executableName(provider)));
+  for (const dir of searchDirectories(env, os.homedir(), shellDirs)) candidates.push(path.join(dir, executableName(provider)));
   const found = candidates.find(isFile);
   if (!found) {
     if (configured) throw new Error(`${LABELS[provider]}: Pfad aus den Einstellungen nicht gefunden (${configured}).`);
@@ -311,11 +345,18 @@ export async function run(request: RunRequest): Promise<string> {
   const prompt = buildPrompt(request.prompt, Array.isArray(request.history) ? request.history : []);
   if (prompt.length > 100_000) throw new Error("Gespräch zu lang. Bitte ein neues Gespräch beginnen.");
 
-  const [command, prefix] = resolveExecutable(request.provider, request.customPaths);
+  const shellDirs = loginShellDirectories();
+  const [command, prefix] = resolveExecutable(request.provider, request.customPaths, process.env, shellDirs);
   mkdirSync(request.workspace, { recursive: true });
   const env = cleanEnvironment(process.env);
   // Damit npm-Wrapper und Hilfsprogramme der CLIs gefunden werden.
-  env.PATH = [path.dirname(process.execPath), ...searchDirectories(process.env)].join(path.delimiter);
+  env.PATH = [path.dirname(process.execPath), ...searchDirectories(process.env, os.homedir(), shellDirs)].join(path.delimiter);
+  // Raycast setzt diese Variablen nicht immer. Claude Code braucht sie u. a. für den Schlüsselbund.
+  const user = os.userInfo();
+  env.HOME ||= user.homedir;
+  env.USER ||= user.username;
+  env.LOGNAME ||= user.username;
+  env.SHELL ||= user.shell || "/bin/zsh";
   const options: Options = { cwd: request.workspace, env, signal: request.signal };
 
   await assertSubscriptionAuth(request.provider, command, prefix, options);
