@@ -150,22 +150,32 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
   };
 
   const paths = customPaths();
-  const modelMenus = (focused?: Provider) => (
-    <ActionPanel.Section title="Modelle">
-      {(focused ? [focused, ...providers.filter((p) => p !== focused)] : providers).map((provider, index) => (
-        <ModelSubmenu
-          key={provider}
-          provider={provider}
-          current={models[provider]}
-          recent={recent[provider]}
-          customPaths={paths}
-          onSelect={(model) => selectModel(provider, model)}
-          title={providers.length > 1 ? `Modell ${LABELS[provider]} (${models[provider] || "Standard"})` : undefined}
-          shortcut={index === 0}
-        />
-      ))}
-    </ActionPanel.Section>
+  const submenuFor = (provider: Provider, withShortcut: boolean) => (
+    <ModelSubmenu
+      key={provider}
+      provider={provider}
+      current={models[provider]}
+      recent={recent[provider]}
+      customPaths={paths}
+      onSelect={(model) => selectModel(provider, model)}
+      title={providers.length > 1 ? `${LABELS[provider]} (${models[provider] || "Standard"})` : undefined}
+      shortcut={withShortcut}
+    />
   );
+
+  // Ein Anbieter: Cmd+M öffnet direkt seine Modellliste.
+  // Mehrere Anbieter: Cmd+M öffnet ein Menü mit allen Anbietern, der markierte steht oben.
+  const modelMenus = (focused?: Provider) => {
+    if (providers.length === 1) return <ActionPanel.Section title="Modell">{submenuFor(providers[0], true)}</ActionPanel.Section>;
+    const ordered = focused ? [focused, ...providers.filter((p) => p !== focused)] : providers;
+    return (
+      <ActionPanel.Section title="Modelle">
+        <ActionPanel.Submenu title="Modelle wählen" icon={Icon.ComputerChip} shortcut={{ modifiers: ["cmd"], key: "m" }}>
+          {ordered.map((provider) => submenuFor(provider, false))}
+        </ActionPanel.Submenu>
+      </ActionPanel.Section>
+    );
+  };
 
   const running = providers.some((p) => states[p].status === "running");
   const anyActivity = providers.some((p) => states[p].status !== "idle");

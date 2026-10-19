@@ -55,7 +55,7 @@ Alle drei Anbieter bekommen denselben Caveman-Ultra-Stilprompt wie das Original:
 
 ## Modelle wählen
 
-Im Aktionsmenü (Cmd+K) gibt es pro Anbieter den Eintrag „Modell wählen“, direkt erreichbar mit **Cmd+M**. Im Befehl „Alle fragen“ stehen dort alle drei Anbieter, der markierte zuerst.
+Im Aktionsmenü (Cmd+K) gibt es pro Anbieter den Eintrag „Modell wählen“, direkt erreichbar mit **Cmd+M**. Im Befehl „Alle fragen“ öffnet Cmd+M ein Menü mit allen drei Anbietern, der markierte steht oben.
 
 - **Standard:** Die CLI nutzt ihr voreingestelltes Modell.
 - **Claude:** Vorschläge `fable`, `opus`, `sonnet`, `haiku`. Volle Namen wie `claude-opus-5-5` gehen über „Eigenes Modell eingeben…“.
