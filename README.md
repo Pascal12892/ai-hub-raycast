@@ -114,9 +114,66 @@ Wie im Original:
 
 ## Tests
 
+Es gibt drei Stufen. Die ersten beiden laufen ohne echte Modelle, die dritte braucht deinen Mac mit angemeldeten CLIs.
+
+### 1. Automatische Tests
+
 ```bash
-npm test     # Bridge-Tests, inklusive Ablauf und Abbrechen mit einer gefälschten CLI
-npm run lint
+npm run check   # Typen, Formatierung und 16 Bridge-Tests
+npm run lint    # Raycast-Lint (braucht Internet)
 ```
+
+Die Bridge-Tests nutzen eine nachgebaute CLI. Geprüft werden unter anderem: nicht interaktive Aufrufe, Entfernen von API-Schlüsseln, Auslesen der Antworten und Fehler, Verlauf, Modellwahl, gemeldetes Modell, Anhänge in beiden Modi, nur lesende Werkzeuge im Datei-Modus und Abbrechen.
+
+Bei jedem Push laufen diese Prüfungen zusätzlich auf GitHub (Reiter „Actions“).
+
+### 2. Live-Test mit den echten CLIs
+
+```bash
+npm run test:live                  # alle drei Anbieter
+npm run test:live -- claude        # nur einen Anbieter
+```
+
+Pro Anbieter werden geprüft: Version, Anmeldung, Antwort mit Umlauten, Rückfrage mit Verlauf, gemeldetes Modell, eingefügte Textdatei, große Datei im Datei-Modus und Abbrechen. Der Test verbraucht etwas Abo-Kontingent und dauert einige Minuten.
+
+### 3. Manuelle Prüfung in Raycast
+
+Die Raycast-Oberfläche lässt sich nicht automatisch testen. Diese Punkte einmal von Hand durchgehen:
+
+- [ ] „Alle fragen“ öffnen, Frage tippen: Es startet keine Anfrage, bevor Enter gedrückt wird.
+- [ ] Enter: Alle drei zeigen „Antwort läuft“, danach einen grünen Haken.
+- [ ] Rechts steht die volle Antwort und darunter das Modell.
+- [ ] Rückfrage tippen und Enter: Die Antwort bezieht sich auf die vorherige.
+- [ ] Enter ohne Text kopiert die markierte Antwort. Cmd+Shift+V fügt sie ein.
+- [ ] Ctrl+C während einer Anfrage bricht ab, Status „Abgebrochen“.
+- [ ] Cmd+N startet ein neues Gespräch.
+- [ ] Cmd+M: Modell bei allen drei Anbietern ändern. Etikett und Modellzeile passen danach.
+- [ ] Raycast schließen und neu öffnen: Die Modellwahl ist noch da.
+- [ ] Cmd+O: Kleine Textdatei anhängen, Frage dazu stellen.
+- [ ] Cmd+O: PDF oder Bild anhängen, Frage dazu stellen.
+- [ ] Im Finder eine Datei markieren, Raycast öffnen, Cmd+Shift+O.
+- [ ] „Claude fragen“ mit Argument direkt aus der Raycast-Suche: Die Anfrage startet sofort.
+
+### Getesteter Stand
+
+Nach einem erfolgreichen Live-Test hier eintragen:
+
+|                 | Version |
+| --------------- | ------- |
+| macOS           |         |
+| Raycast         |         |
+| Node.js         |         |
+| Claude Code     |         |
+| Codex CLI       |         |
+| Antigravity CLI |         |
+| Datum           |         |
+
+## Offizielle Referenzen
+
+- [Raycast: Extension-Entwicklung](https://developers.raycast.com)
+- [Claude Code: CLI-Referenz](https://code.claude.com/docs/en/cli-reference) und [Modellkonfiguration](https://code.claude.com/docs/en/model-config)
+- [Codex CLI](https://developers.openai.com/codex/cli)
+- [Antigravity CLI: Headless-Modus](https://antigravity.google/docs/cli/headless) und [Migration von Gemini CLI](https://antigravity.google/docs/cli/gcli-migration)
+- Original für Windows: [Alebabo/ScreenAi](https://github.com/Alebabo/ScreenAi)
 
 Die Anbieterlogos stammen aus [LobeHub Icons](https://github.com/lobehub/lobe-icons) und bleiben Marken ihrer jeweiligen Eigentümer.
