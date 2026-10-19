@@ -278,7 +278,9 @@ async function assertSubscriptionAuth(provider: Provider, command: string, prefi
     if ((error as Error).name === "AbortError") throw error;
     throw new Error(`${LABELS[provider]}: Anmeldestatus konnte nicht geprüft werden.`);
   }
-  if (status.code !== 0) throw new Error(`${LABELS[provider]}: Anmeldung fehlt oder konnte nicht geprüft werden.`);
+  if (status.code !== 0) {
+    throw new Error(`${LABELS[provider]}: Anmeldung fehlt. Bitte im Terminal anmelden. (${summarizeCliFailure(status.stderr, status.stdout, status.code)})`);
+  }
   if (provider === "claude") {
     let auth;
     try {
