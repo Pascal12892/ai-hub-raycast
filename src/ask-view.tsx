@@ -2,6 +2,7 @@ import { Action, ActionPanel, Color, Icon, Keyboard, List, environment, getPrefe
 import path from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LABELS, run, type ChatMessage, type CustomPaths, type Provider } from "./bridge";
+import { ModelSubmenu, loadModels, saveModel, type ModelChoice } from "./model-menu";
 
 type Preferences = { claudePath?: string; codexPath?: string; agyPath?: string };
 
@@ -38,7 +39,12 @@ function subtitleFor(state: ProviderState): string {
   return "";
 }
 
-function accessoryFor(status: Status): List.Item.Accessory[] {
+function accessoryFor(status: Status, model: string): List.Item.Accessory[] {
+  const tag: List.Item.Accessory[] = model ? [{ tag: model, tooltip: "Gewähltes Modell" }] : [];
+  return [...tag, ...statusAccessory(status)];
+}
+
+function statusAccessory(status: Status): List.Item.Accessory[] {
   switch (status) {
     case "running":
       return [{ icon: { source: Icon.Clock, tintColor: Color.Orange }, tooltip: "Läuft" }];
@@ -61,6 +67,11 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
   const statesRef = useRef(states);
   statesRef.current = states;
   const started = useRef(false);
+  const [models, setModels] = useState<ModelChoice>({ gemini: "", claude: "", codex: "" });
+  const [recent, setRecent] = useState<Record<Provider, string[]>>({ gemini: [], claude: [], codex: [] });
+  const modelsRef = useRef(models);
+  modelsRef.current = models;
+  const [modelsLoaded, setModelsLoaded] = useState(false);
 
   const update = (provider: Provider, change: (s: ProviderState) => ProviderState) => setStates((prev) => ({ ...prev, [provider]: change(prev[provider]) }));
 
@@ -80,7 +91,7 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
         controllers.current.set(provider, controller);
         const history = statesRef.current[provider].history;
         update(provider, (s) => ({ ...s, status: "running", question, error: undefined }));
-        run({ provider, prompt: question, history, workspace, customPaths: paths, signal: controller.signal })
+        run({ provider, prompt: question, history, workspace, customPaths: paths, model: modelsRef.current[provider], signal: controller.signal })
           .then((answer) =>
             update(provider, (s) => ({
               ...s,
@@ -110,14 +121,51 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
   };
 
   useEffect(() => {
-    if (!started.current && initialQuestion?.trim()) {
-      started.current = true;
-      send(initialQuestion);
-    }
+    loadModels()
+      .then(({ models, recent }) => {
+        setModels(models);
+        setRecent(recent);
+      })
+      .finally(() => setModelsLoaded(true));
     return () => {
       for (const controller of controllers.current.values()) controller.abort();
     };
   }, []);
+
+  // Erst senden, wenn die gespeicherten Modelle geladen sind.
+  useEffect(() => {
+    if (!modelsLoaded) return;
+    if (!started.current && initialQuestion?.trim()) {
+      started.current = true;
+      send(initialQuestion);
+    }
+  }, [modelsLoaded]);
+
+  const selectModel = (provider: Provider, model: string) => {
+    setModels((prev) => ({ ...prev, [provider]: model }));
+    saveModel(provider, model, recent[provider])
+      .then((next) => setRecent((prev) => ({ ...prev, [provider]: next })))
+      .catch(() => {});
+    showToast({ style: Toast.Style.Success, title: `${LABELS[provider]}: ${model || "Standardmodell"}`, message: "Gilt ab der nächsten Frage." });
+  };
+
+  const paths = customPaths();
+  const modelMenus = (focused?: Provider) => (
+    <ActionPanel.Section title="Modelle">
+      {(focused ? [focused, ...providers.filter((p) => p !== focused)] : providers).map((provider, index) => (
+        <ModelSubmenu
+          key={provider}
+          provider={provider}
+          current={models[provider]}
+          recent={recent[provider]}
+          customPaths={paths}
+          onSelect={(model) => selectModel(provider, model)}
+          title={providers.length > 1 ? `Modell ${LABELS[provider]} (${models[provider] || "Standard"})` : undefined}
+          shortcut={index === 0}
+        />
+      ))}
+    </ActionPanel.Section>
+  );
 
   const running = providers.some((p) => states[p].status === "running");
   const anyActivity = providers.some((p) => states[p].status !== "idle");
@@ -151,10 +199,11 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
         <List.EmptyView
           icon={providers.length > 1 ? "all.png" : ICONS[providers[0]]}
           title={`Frage an ${target}`}
-          description="Tippen startet noch keine Anfrage. Erst Enter sendet."
+          description={`Tippen startet noch keine Anfrage. Erst Enter sendet.\n\nModelle: ${providers.map((p) => `${LABELS[p]} ${models[p] || "Standard"}`).join(", ")}  ·  Cmd+M zum Ändern`}
           actions={
             <ActionPanel>
               {sendAction}
+              {modelMenus()}
               {commonActions}
             </ActionPanel>
           }
@@ -176,12 +225,13 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
               title={LABELS[provider]}
               subtitle={subtitleFor(state)}
               icon={ICONS[provider]}
-              accessories={accessoryFor(state.status)}
+              accessories={accessoryFor(state.status, models[provider])}
               detail={<List.Item.Detail markdown={markdownFor(state)} />}
               actions={
                 <ActionPanel>
                   {sendAction}
                   {copy}
+                  {modelMenus(provider)}
                   {commonActions}
                 </ActionPanel>
               }

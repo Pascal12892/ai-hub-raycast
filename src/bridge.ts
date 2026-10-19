@@ -14,7 +14,41 @@ export const SYSTEM_PROMPT = `Antworte im Caveman-Ultra-Stil und in der Sprache 
 const ANSWER_TIMEOUT_MS = 180_000;
 const STATUS_TIMEOUT_MS = 15_000;
 
-export function argumentsFor(provider: string): string[] {
+/** Modellnamen dürfen nur harmlose Zeichen enthalten (kein Leerzeichen, keine Optionen). */
+export function validModel(model: string | undefined): string | undefined {
+  const value = model?.trim();
+  if (!value) return undefined;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:\-[\]/]*$/.test(value)) throw new Error(`Ungültiger Modellname: ${value}`);
+  return value;
+}
+
+export function argumentsFor(provider: string, model?: string): string[] {
+  const chosen = validModel(model);
+  const base = baseArguments(provider);
+  if (!chosen) return base;
+  // Bei Codex muss das Modell vor dem abschließenden "-" (Prompt von stdin) stehen.
+  if (provider === "codex") return [...base.slice(0, -1), "--model", chosen, "-"];
+  return [...base, "--model", chosen];
+}
+
+/** Vorschläge im Menü. Gemini wird zusätzlich live über `agy models` abgefragt. */
+export const MODEL_PRESETS: Record<Provider, string[]> = {
+  claude: ["fable", "opus", "sonnet", "haiku"],
+  gemini: [],
+  codex: [],
+};
+
+/** Liest Modell-Slugs aus der Ausgabe von `agy models`. */
+export function parseModelList(output: string): string[] {
+  const slugs = new Set<string>();
+  for (const raw of output.split(/\r?\n/)) {
+    const token = raw.replace(/^[\s*•>-]+/, "").split(/\s+/)[0] ?? "";
+    if (/^[a-z][a-z0-9]*(?:[-.][a-z0-9]+)+$/.test(token)) slugs.add(token);
+  }
+  return [...slugs];
+}
+
+function baseArguments(provider: string): string[] {
   switch (provider) {
     case "gemini":
       return ["--input-format", "stream-json", "--output-format", "stream-json", "--mode", "plan", "--sandbox", "--print-timeout", "180s"];
@@ -336,11 +370,12 @@ export type RunRequest = {
   history?: ChatMessage[];
   workspace: string;
   customPaths?: CustomPaths;
+  model?: string;
   signal?: AbortSignal;
 };
 
 export async function run(request: RunRequest): Promise<string> {
-  const args = argumentsFor(request.provider);
+  const args = argumentsFor(request.provider, request.model);
   if (typeof request.prompt !== "string" || !request.prompt.trim()) throw new Error("Frage fehlt.");
   const prompt = buildPrompt(request.prompt, Array.isArray(request.history) ? request.history : []);
   if (prompt.length > 100_000) throw new Error("Gespräch zu lang. Bitte ein neues Gespräch beginnen.");
@@ -376,4 +411,16 @@ export async function run(request: RunRequest): Promise<string> {
   const answer = parseAnswer(request.provider, stdout);
   if (!answer) throw new Error("Keine Textantwort erhalten.");
   return answer;
+}
+
+/** Fragt die verfügbaren Modelle ab. Nur Gemini (agy models) bietet eine Liste, sonst Vorschläge. */
+export async function listModels(provider: Provider, customPaths: CustomPaths = {}): Promise<string[]> {
+  if (provider !== "gemini") return MODEL_PRESETS[provider];
+  const shellDirs = loginShellDirectories();
+  const [command, prefix] = resolveExecutable(provider, customPaths, process.env, shellDirs);
+  const env = cleanEnvironment(process.env);
+  env.PATH = [path.dirname(process.execPath), ...searchDirectories(process.env, os.homedir(), shellDirs)].join(path.delimiter);
+  const { code, stdout, stderr } = await execute(command, [...prefix, "models"], null, { cwd: os.homedir(), env }, STATUS_TIMEOUT_MS, 200_000);
+  if (code !== 0) throw new Error(summarizeCliFailure(stderr, stdout, code));
+  return parseModelList(stdout);
 }

@@ -3,7 +3,17 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SYSTEM_PROMPT, argumentsFor, buildPrompt, cleanEnvironment, parseAnswer, resolveExecutable, run, summarizeCliFailure } from "../src/bridge.ts";
+import {
+  SYSTEM_PROMPT,
+  argumentsFor,
+  parseModelList,
+  buildPrompt,
+  cleanEnvironment,
+  parseAnswer,
+  resolveExecutable,
+  run,
+  summarizeCliFailure,
+} from "../src/bridge.ts";
 
 test("alle Anbieter laufen nicht interaktiv, unbekannte werden abgelehnt", () => {
   assert.ok(argumentsFor("gemini").includes("stream-json"));
@@ -16,7 +26,14 @@ test("alle Anbieter laufen nicht interaktiv, unbekannte werden abgelehnt", () =>
 });
 
 test("API-Zugangsdaten werden entfernt, ohne die Elternumgebung zu ändern", () => {
-  const source = { PATH: "keep", OPENAI_API_KEY: "secret", ANTHROPIC_API_KEY: "secret", ANTHROPIC_BASE_URL: "https://example.invalid", GEMINI_API_KEY: "secret", GOOGLE_GENAI_USE_VERTEXAI: "true" };
+  const source = {
+    PATH: "keep",
+    OPENAI_API_KEY: "secret",
+    ANTHROPIC_API_KEY: "secret",
+    ANTHROPIC_BASE_URL: "https://example.invalid",
+    GEMINI_API_KEY: "secret",
+    GOOGLE_GENAI_USE_VERTEXAI: "true",
+  };
   assert.deepEqual(cleanEnvironment(source), { PATH: "keep" });
   assert.equal(source.OPENAI_API_KEY, "secret");
 });
@@ -25,7 +42,11 @@ test("Antworten werden pro Anbieter ausgelesen, Codex-Toolereignisse ignoriert",
   const antigravity = [{ event: "init" }, { event: "result", result: { status: "SUCCESS", response: "Grüße 🌍" } }];
   assert.equal(parseAnswer("gemini", antigravity.map((e) => JSON.stringify(e)).join("\n")), "Grüße 🌍");
   assert.equal(parseAnswer("claude", '{"result":"Grüße 🌍","is_error":false}'), "Grüße 🌍");
-  const events = [{ type: "thread.started" }, { type: "item.completed", item: { type: "command_execution", text: "ignore" } }, { type: "item.completed", item: { type: "agent_message", text: "Hallo" } }];
+  const events = [
+    { type: "thread.started" },
+    { type: "item.completed", item: { type: "command_execution", text: "ignore" } },
+    { type: "item.completed", item: { type: "agent_message", text: "Hallo" } },
+  ];
   assert.equal(parseAnswer("codex", events.map((e) => JSON.stringify(e)).join("\n")), "Hallo");
 });
 
@@ -98,4 +119,20 @@ test("Abbrechen beendet den Prozess", async () => {
   const started = Date.now();
   await assert.rejects(pending, (error: Error) => error.name === "AbortError");
   assert.ok(Date.now() - started < 5000);
+});
+
+test("Modellauswahl wird an die richtige Stelle gesetzt und geprüft", () => {
+  assert.deepEqual(argumentsFor("claude", "opus").slice(-2), ["--model", "opus"]);
+  assert.deepEqual(argumentsFor("gemini", "gemini-3.1-pro-high").slice(-2), ["--model", "gemini-3.1-pro-high"]);
+  const codex = argumentsFor("codex", "gpt-5-codex");
+  assert.deepEqual(codex.slice(-3), ["--model", "gpt-5-codex", "-"]);
+  assert.deepEqual(argumentsFor("claude", "  "), argumentsFor("claude"));
+  assert.throws(() => argumentsFor("claude", "--dangerously-skip-permissions"), /Ungültig/);
+  assert.throws(() => argumentsFor("claude", "opus extra"), /Ungültig/);
+  assert.equal(argumentsFor("claude", "opus[1m]").at(-1), "opus[1m]");
+});
+
+test("Modellliste von agy wird ausgelesen", () => {
+  const output = "Available models:\n  * gemini-4-argon-high (default)\n  - gemini-3.8-flash-medium  Fast\ngemini-3.1-pro-high\nModel   Description\n";
+  assert.deepEqual(parseModelList(output), ["gemini-4-argon-high", "gemini-3.8-flash-medium", "gemini-3.1-pro-high"]);
 });

@@ -47,11 +47,22 @@ Die Frage kann direkt als Argument hinter dem Befehl stehen. Dann startet die An
 - Links stehen die Anbieter mit Status, rechts die vollständige Antwort.
 - Nach einer Antwort ins Suchfeld tippen und Enter drücken: Das ist eine Rückfrage mit dem bisherigen Verlauf.
 - Ohne Text im Suchfeld kopiert Enter die Antwort des markierten Anbieters.
-- Cmd+K zeigt alle Aktionen: Antwort einfügen (Cmd+Shift+V), Abbrechen (Ctrl+C), Neues Gespräch (Cmd+N), Einstellungen.
+- Cmd+K zeigt alle Aktionen: Antwort einfügen (Cmd+Shift+V), Modell wählen (Cmd+M), Abbrechen (Ctrl+C), Neues Gespräch (Cmd+N), Einstellungen.
 
 Tipp: In den Raycast-Einstellungen unter Extensions kannst du jedem Befehl einen Alias (z. B. `cl` für Claude fragen) oder einen eigenen Hotkey geben.
 
 Alle drei Anbieter bekommen denselben Caveman-Ultra-Stilprompt wie das Original: kurze Antworten mit höchstens 35 Wörtern, außer die Frage verlangt ausdrücklich Details.
+
+## Modelle wählen
+
+Im Aktionsmenü (Cmd+K) gibt es pro Anbieter den Eintrag „Modell wählen“, direkt erreichbar mit **Cmd+M**. Im Befehl „Alle fragen“ stehen dort alle drei Anbieter, der markierte zuerst.
+
+- **Standard:** Die CLI nutzt ihr voreingestelltes Modell.
+- **Claude:** Vorschläge `fable`, `opus`, `sonnet`, `haiku`. Volle Namen wie `claude-opus-5-5` gehen über „Eigenes Modell eingeben…“.
+- **Gemini:** Die Liste kommt live aus `agy models`.
+- **Codex:** Modellname über „Eigenes Modell eingeben…“, zuletzt genutzte Modelle erscheinen danach im Menü.
+
+Die Wahl wird gespeichert und gilt ab der nächsten Frage. Das gewählte Modell steht als Etikett neben dem Anbieter.
 
 ## Einstellungen
 
