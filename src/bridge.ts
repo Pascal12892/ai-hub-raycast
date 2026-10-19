@@ -97,7 +97,8 @@ export function withAttachments(question: string, attachments: Attachment[]): st
     const list = attachments.map((a) => `- ${a.name} (${formatSize(a.size)})`).join("\n");
     return (
       `${question}\n\nAngehängte Dateien liegen im aktuellen Arbeitsordner:\n${list}\n\n` +
-      "Lies sie mit deinen Lese-Werkzeugen. Bei großen Dateien gezielt suchen statt alles zu laden."
+      "Die Antwort steht in diesen Dateien. Sieh immer mit deinen Lese-Werkzeugen nach, bevor du antwortest, und rate nicht. " +
+      "Bei großen Dateien gezielt suchen statt alles zu laden."
     );
   }
   const blocks = attachments.map((a) => {
@@ -387,6 +388,11 @@ export function parseAnswer(provider: Provider, stdout: string): string {
     const result = events.filter((event) => event.event === "result").at(-1)?.result;
     if (!result) throw new Error("Antigravity hat kein Ergebnis geliefert.");
     if (result.status !== "SUCCESS") throw new Error(result.error || `Antigravity-Anfrage beendet: ${result.status || "unbekannt"}.`);
+    // Im Headless-Modus verweigert agy Aktionen, die eine Rückfrage bräuchten, und antwortet dann leer.
+    if (!result.response?.trim() && Array.isArray(result.denied_actions) && result.denied_actions.length) {
+      const names = result.denied_actions.map((a: { display_name?: string; action?: string }) => a.display_name || a.action).join(", ");
+      throw new Error(`Gemini wollte eine nicht erlaubte Aktion ausführen (${names}) und hat deshalb nicht geantwortet.`);
+    }
     return result.response;
   }
   if (provider === "codex") {
@@ -624,7 +630,12 @@ export async function run(request: RunRequest): Promise<RunResult> {
 
   await assertSubscriptionAuth(request.provider, command, prefix, options);
 
-  const input = request.provider === "gemini" ? JSON.stringify({ event: "user", message: { content: prompt } }) + "\n" : prompt;
+  // agy darf im Headless-Modus keine Shell-Befehle ausführen. Die eingebauten Lese-Werkzeuge funktionieren ohne Rückfrage.
+  const finalPrompt =
+    fileAccess && request.provider === "gemini"
+      ? `${prompt}\n\nHinweis: Shell-Befehle (run_command) sind hier gesperrt. Nutze ausschließlich grep_search, find_by_name, list_dir und view_file.`
+      : prompt;
+  const input = request.provider === "gemini" ? JSON.stringify({ event: "user", message: { content: finalPrompt } }) + "\n" : finalPrompt;
   const { code, stdout, stderr } = await execute(command, [...prefix, ...args], input, options, fileAccess ? FILE_TIMEOUT_MS : ANSWER_TIMEOUT_MS, 4_000_000);
   writeDebugLog(request.provider, args, options.cwd, code, stdout, stderr);
   if (code !== 0) {

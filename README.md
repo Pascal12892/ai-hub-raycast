@@ -68,7 +68,7 @@ Erlaubt sind Dateien bis 100 MB, zusammen bis 300 MB, auch PDFs, Bilder und Tabe
 - **Kleine Textdateien** (zusammen bis 500 KB) werden direkt in die Frage eingefügt. Das ist schnell und klappt bei allen drei Anbietern gleich.
 - **Größere Dateien, PDFs und Bilder** werden in einen eigenen Ordner kopiert. Die CLIs arbeiten in diesem Ordner und lesen die Dateien selbst. Claude bekommt dafür nur die Lese-Werkzeuge Read, Grep und Glob, Codex läuft in der Read-only-Sandbox, Gemini im Plan-Modus mit Sandbox. Die Originale werden nicht angefasst. Das Zeitlimit steigt in diesem Fall auf 10 Minuten. Die Kopien werden nach 24 Stunden gelöscht.
 
-Bei sehr großen Dateien lesen die Modelle nicht alles, sondern suchen gezielt. Wie gut das klappt, hängt vom Anbieter und Dateityp ab. Claude kann PDFs und Bilder direkt lesen. Ob Codex und Gemini Bilder und PDFs aus dem Ordner auswerten, hängt von deren CLI-Version ab.
+Bei sehr großen Dateien lesen die Modelle nicht alles, sondern suchen gezielt. Wie gut das klappt, hängt vom Anbieter und Dateityp ab. Claude kann PDFs und Bilder direkt lesen. Codex sucht mit Shell-Befehlen in der Read-only-Sandbox. Gemini darf im Headless-Modus keine Shell-Befehle ausführen und wird deshalb angewiesen, seine eingebauten Lese-Werkzeuge zu nutzen.
 
 ## Modelle wählen
 
@@ -81,7 +81,7 @@ Im Aktionsmenü (Cmd+K) gibt es pro Anbieter den Eintrag „Modell wählen“, d
 
 Die Wahl wird gespeichert und gilt ab der nächsten Frage. Das gewählte Modell steht als Etikett neben dem Anbieter.
 
-Unter jeder Antwort steht, welches Modell tatsächlich geantwortet hat, sofern die CLI das meldet. Claude meldet es immer. Meldet eine CLI nichts, steht dort das gewählte Modell mit einem Hinweis.
+Unter jeder Antwort steht, welches Modell tatsächlich geantwortet hat, sofern die CLI das meldet. Nur Claude meldet das Modell. Codex und die Antigravity CLI liefern in ihrer JSON-Ausgabe keinen Modellnamen (geprüft mit Codex 0.163.0 und Antigravity 1.4.2). Dort steht das gewählte Modell mit einem Hinweis.
 
 ## Einstellungen
 

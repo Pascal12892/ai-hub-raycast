@@ -230,3 +230,11 @@ test("im Datei-Modus läuft die CLI im Ordner mit den kopierten Anhängen", asyn
   const answer = await run({ provider: "claude", prompt: "Lies", workspace: path.join(dir, "ws"), filesDir, customPaths: { claude: file } });
   assert.equal(answer.text, "daten.csv|Read,Grep,Glob");
 });
+
+test("Gemini: verweigerte Aktion ohne Antwort ergibt eine verständliche Fehlermeldung", () => {
+  const out = JSON.stringify({
+    event: "result",
+    result: { status: "SUCCESS", response: "", denied_actions: [{ action: "command", display_name: "RunCommand" }] },
+  });
+  assert.throws(() => parseAnswer("gemini", out), /nicht erlaubte Aktion ausführen \(RunCommand\)/);
+});

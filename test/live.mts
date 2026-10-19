@@ -25,7 +25,8 @@ import {
   type Provider,
 } from "../src/bridge.ts";
 
-type Check = { name: string; ok: boolean; detail: string };
+/** info: kein Fehler, nur ein Hinweis (z. B. eine CLI meldet ihr Modell grundsätzlich nicht). */
+type Check = { name: string; ok: boolean; detail: string; info?: boolean };
 
 const debug = process.argv.includes("--debug");
 const selected = process.argv.slice(2).filter((a): a is Provider => (PROVIDERS as string[]).includes(a));
@@ -98,9 +99,11 @@ async function testProvider(provider: Provider): Promise<Check[]> {
   checks.push(
     await check("Gemeldetes Modell", async () => {
       const { model } = await run({ ...base, prompt: "Antworte nur mit OK." });
-      if (!model) throw new Error("CLI meldet kein Modell (in der App steht dann nur das gewählte Modell)");
-      return model;
-    }),
+      return model ?? "nicht gemeldet";
+    }).then((c) =>
+      // Codex und Antigravity liefern in ihrer JSON-Ausgabe keinen Modellnamen. Das ist kein Fehler.
+      c.ok && c.detail.startsWith("nicht gemeldet") ? { ...c, info: true, detail: `${c.detail}, die CLI liefert keinen Modellnamen` } : c,
+    ),
   );
 
   checks.push(
@@ -151,7 +154,7 @@ for (const [provider, checks] of results) {
   console.log(LABELS[provider]);
   for (const c of checks) {
     if (!c.ok) failed++;
-    console.log(`  ${c.ok ? "✓" : "✗"} ${c.name.padEnd(26)} ${c.detail}`);
+    console.log(`  ${c.info ? "i" : c.ok ? "✓" : "✗"} ${c.name.padEnd(26)} ${c.detail}`);
   }
   console.log("");
 }
