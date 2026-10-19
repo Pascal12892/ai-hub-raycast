@@ -6,6 +6,8 @@ import path from "node:path";
 import {
   SYSTEM_PROMPT,
   CLAUDE_GROUPS,
+  readAttachments,
+  withAttachments,
   parseModel,
   groupGeminiModels,
   argumentsFor,
@@ -167,4 +169,26 @@ test("tatsächlich genutztes Modell wird aus der Ausgabe gelesen", () => {
   ];
   assert.equal(parseModel("gemini", gemini.map((e) => JSON.stringify(e)).join("\n")), "gemini-3.1-pro-high");
   assert.equal(parseModel("codex", '{"type":"thread.started"}'), undefined);
+});
+
+test("Textdateien werden angehängt, Binärdateien und zu große Dateien abgelehnt", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "aihub-"));
+  const text = path.join(dir, "notizen.md");
+  writeFileSync(text, "# Titel\n```py\nprint(1)\n```\nÄÖÜ");
+  const png = path.join(dir, "bild.png");
+  writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]));
+  const big = path.join(dir, "gross.txt");
+  writeFileSync(big, "x".repeat(250_000));
+
+  const [attachment] = readAttachments([text]);
+  assert.equal(attachment.name, "notizen.md");
+  const prompt = withAttachments("Fass zusammen", [attachment]);
+  assert.match(prompt, /^Fass zusammen/);
+  assert.match(prompt, /Datei: notizen.md\n````\n# Titel/);
+  assert.match(prompt, /ÄÖÜ\n````$/);
+  assert.equal(withAttachments("Nur Frage", []), "Nur Frage");
+
+  assert.throws(() => readAttachments([png]), /keine Textdatei/);
+  assert.throws(() => readAttachments([big]), /zu groß/);
+  assert.throws(() => readAttachments([dir]), /Ordner/);
 });

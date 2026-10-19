@@ -1,7 +1,8 @@
 import { Action, ActionPanel, Color, Icon, Keyboard, List, environment, getPreferenceValues, openExtensionPreferences, showToast, Toast } from "@raycast/api";
 import path from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LABELS, run, type ChatMessage, type CustomPaths, type Provider } from "./bridge";
+import { LABELS, run, withAttachments, type Attachment, type ChatMessage, type CustomPaths, type Provider } from "./bridge";
+import { AttachForm, attachFinderSelection } from "./attachments";
 import { ModelSubmenu, loadModels, saveModel, type ModelChoice } from "./model-menu";
 
 type Preferences = { claudePath?: string; codexPath?: string; agyPath?: string };
@@ -13,6 +14,8 @@ type ProviderState = {
   answer?: string;
   error?: string;
   history: ChatMessage[];
+  /** Fragen so, wie sie angezeigt werden (ohne eingefügten Dateiinhalt). */
+  shownQuestions: string[];
   /** Modellangabe je beantworteter Frage, parallel zu den Antworten in history. */
   modelNotes: string[];
   /** Zuletzt tatsächlich genutztes Modell, falls die CLI es meldet. */
@@ -22,7 +25,7 @@ type ProviderState = {
 const ICONS: Record<Provider, string> = { gemini: "gemini.png", claude: "claude.png", codex: "codex.png" };
 
 function emptyState(providers: Provider[]): Record<string, ProviderState> {
-  return Object.fromEntries(providers.map((p) => [p, { status: "idle", history: [], modelNotes: [] } satisfies ProviderState]));
+  return Object.fromEntries(providers.map((p) => [p, { status: "idle", history: [], shownQuestions: [], modelNotes: [] } satisfies ProviderState]));
 }
 
 function customPaths(): CustomPaths {
@@ -34,7 +37,7 @@ function markdownFor(state: ProviderState): string {
   const parts: string[] = [];
   for (let i = 0; i + 1 < state.history.length; i += 2) {
     const note = state.modelNotes[i / 2];
-    parts.push(`**Du:** ${state.history[i].text}\n\n${state.history[i + 1].text}${note ? `\n\n_${note}_` : ""}`);
+    parts.push(`**Du:** ${state.shownQuestions[i / 2] ?? state.history[i].text}\n\n${state.history[i + 1].text}${note ? `\n\n_${note}_` : ""}`);
   }
   if (state.status === "running") parts.push(`**Du:** ${state.question}\n\n_Antwort läuft…_`);
   if (state.status === "error") parts.push(`**Du:** ${state.question}\n\n**Fehler:** ${state.error}`);
@@ -92,18 +95,25 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
   const modelsRef = useRef(models);
   modelsRef.current = models;
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
 
   const update = (provider: Provider, change: (s: ProviderState) => ProviderState) => setStates((prev) => ({ ...prev, [provider]: change(prev[provider]) }));
 
   const send = useCallback(
     (raw: string) => {
-      const question = raw.trim();
+      const files = attachmentsRef.current;
+      const question = raw.trim() || (files.length ? "Bitte die angehängten Dateien zusammenfassen." : "");
       if (!question) return;
+      const prompt = withAttachments(question, files);
+      const shown = files.length ? `${question}\n\n📎 ${files.map((f) => f.name).join(", ")}` : question;
       if (providers.some((p) => statesRef.current[p].status === "running")) {
         showToast({ style: Toast.Style.Failure, title: "Es läuft noch eine Anfrage", message: "Erst abbrechen oder warten." });
         return;
       }
       setSearchText("");
+      setAttachments([]);
       const paths = customPaths();
       const workspace = path.join(environment.supportPath, "Workspace");
       for (const provider of providers) {
@@ -111,8 +121,8 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
         controllers.current.set(provider, controller);
         const history = statesRef.current[provider].history;
         const requested = modelsRef.current[provider];
-        update(provider, (s) => ({ ...s, status: "running", question, error: undefined }));
-        run({ provider, prompt: question, history, workspace, customPaths: paths, model: requested, signal: controller.signal })
+        update(provider, (s) => ({ ...s, status: "running", question: shown, error: undefined }));
+        run({ provider, prompt, history, workspace, customPaths: paths, model: requested, signal: controller.signal })
           .then(({ text, model }) =>
             update(provider, (s) => ({
               ...s,
@@ -120,7 +130,8 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
               answer: text,
               usedModel: model,
               modelNotes: [...s.modelNotes, modelNote(LABELS[provider], requested, model)],
-              history: [...s.history, { role: "user", text: question }, { role: "assistant", text }],
+              shownQuestions: [...s.shownQuestions, shown],
+              history: [...s.history, { role: "user", text: prompt }, { role: "assistant", text }],
             })),
           )
           .catch((error: Error) =>
@@ -205,9 +216,51 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
   const hasHistory = providers.some((p) => states[p].history.length > 0);
   const target = providers.length > 1 ? "alle drei" : LABELS[providers[0]];
 
-  const sendAction = searchText.trim() ? (
-    <Action title={hasHistory ? "Rückfrage senden" : "Senden"} icon={Icon.ArrowRight} onAction={() => send(searchText)} />
-  ) : null;
+  const addAttachments = (files: Attachment[]) => {
+    setAttachments((prev) => {
+      const byPath = new Map(prev.map((f) => [f.path, f]));
+      for (const f of files) byPath.set(f.path, f);
+      return [...byPath.values()];
+    });
+    showToast({
+      style: Toast.Style.Success,
+      title: `${files.length === 1 ? files[0].name : `${files.length} Dateien`} angehängt`,
+      message: "Geht mit der nächsten Frage mit.",
+    });
+  };
+
+  const attachActions = (
+    <ActionPanel.Section title="Dateien">
+      <Action.Push
+        title="Dateien anhängen…"
+        icon={Icon.Paperclip}
+        shortcut={{ modifiers: ["cmd"], key: "o" }}
+        target={<AttachForm onAttach={addAttachments} />}
+      />
+      <Action
+        title="Finder-Auswahl anhängen"
+        icon={Icon.Finder}
+        shortcut={{ modifiers: ["cmd", "shift"], key: "o" }}
+        onAction={() => attachFinderSelection(addAttachments)}
+      />
+      {attachments.length > 0 ? (
+        <Action
+          title={`Anhänge entfernen (${attachments.length})`}
+          icon={Icon.Trash}
+          style={Action.Style.Destructive}
+          shortcut={{ modifiers: ["cmd", "shift"], key: "backspace" }}
+          onAction={() => setAttachments([])}
+        />
+      ) : null}
+    </ActionPanel.Section>
+  );
+
+  const attachmentInfo = attachments.length ? `📎 ${attachments.map((f) => f.name).join(", ")}` : "";
+
+  const sendAction =
+    searchText.trim() || attachments.length ? (
+      <Action title={hasHistory ? "Rückfrage senden" : "Senden"} icon={Icon.ArrowRight} onAction={() => send(searchText)} />
+    ) : null;
 
   const commonActions = (
     <>
@@ -226,17 +279,21 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
       onSearchTextChange={setSearchText}
       isLoading={running}
       isShowingDetail={anyActivity}
-      searchBarPlaceholder={hasHistory ? "Rückfrage eingeben und Enter drücken" : `Frage an ${target} eingeben und Enter drücken`}
+      searchBarPlaceholder={
+        (hasHistory ? "Rückfrage eingeben und Enter drücken" : `Frage an ${target} eingeben und Enter drücken`) +
+        (attachments.length ? ` (${attachments.length} ${attachments.length === 1 ? "Datei" : "Dateien"} angehängt)` : "")
+      }
     >
       {!anyActivity ? (
         <List.EmptyView
           icon={providers.length > 1 ? "all.png" : ICONS[providers[0]]}
           title={`Frage an ${target}`}
-          description={`Tippen startet noch keine Anfrage. Erst Enter sendet.\n\nModelle: ${providers.map((p) => `${LABELS[p]} ${models[p] || "Standard"}`).join(", ")}  ·  Cmd+M zum Ändern`}
+          description={`Tippen startet noch keine Anfrage. Erst Enter sendet.\n\nModelle: ${providers.map((p) => `${LABELS[p]} ${models[p] || "Standard"}`).join(", ")}  ·  Cmd+M zum Ändern${attachmentInfo ? `\n\n${attachmentInfo}` : "\n\nDateien anhängen: Cmd+O, Finder-Auswahl: Cmd+Shift+O"}`}
           actions={
             <ActionPanel>
               {sendAction}
               {modelMenus()}
+              {attachActions}
               {commonActions}
             </ActionPanel>
           }
@@ -265,6 +322,7 @@ export function AskView(props: { providers: Provider[]; initialQuestion?: string
                   {sendAction}
                   {copy}
                   {modelMenus(provider)}
+                  {attachActions}
                   {commonActions}
                 </ActionPanel>
               }

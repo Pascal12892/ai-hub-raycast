@@ -47,11 +47,23 @@ Die Frage kann direkt als Argument hinter dem Befehl stehen. Dann startet die An
 - Links stehen die Anbieter mit Status, rechts die vollständige Antwort.
 - Nach einer Antwort ins Suchfeld tippen und Enter drücken: Das ist eine Rückfrage mit dem bisherigen Verlauf.
 - Ohne Text im Suchfeld kopiert Enter die Antwort des markierten Anbieters.
-- Cmd+K zeigt alle Aktionen: Antwort einfügen (Cmd+Shift+V), Modell wählen (Cmd+M), Abbrechen (Ctrl+C), Neues Gespräch (Cmd+N), Einstellungen.
+- Cmd+K zeigt alle Aktionen: Antwort einfügen (Cmd+Shift+V), Modell wählen (Cmd+M), Dateien anhängen (Cmd+O), Abbrechen (Ctrl+C), Neues Gespräch (Cmd+N), Einstellungen.
 
 Tipp: In den Raycast-Einstellungen unter Extensions kannst du jedem Befehl einen Alias (z. B. `cl` für Claude fragen) oder einen eigenen Hotkey geben.
 
 Alle drei Anbieter bekommen denselben Caveman-Ultra-Stilprompt wie das Original: kurze Antworten mit höchstens 35 Wörtern, außer die Frage verlangt ausdrücklich Details.
+
+## Dateien anhängen
+
+Dateien gehen mit der nächsten Frage an alle gewählten Anbieter.
+
+- **Cmd+O:** Dateien über einen Dialog auswählen.
+- **Cmd+Shift+O:** Die im Finder markierten Dateien anhängen.
+- **Cmd+Shift+Löschen:** Anhänge wieder entfernen.
+
+Ohne eingetippte Frage werden die Dateien zusammengefasst. Rückfragen beziehen sich weiter auf die Dateien.
+
+Unterstützt sind Textdateien (z. B. .txt, .md, .csv, .json, .py, .ts), je Datei höchstens 200 KB und zusammen höchstens 400 KB. Der Inhalt wird als Text in die Frage eingefügt. Bilder, PDFs und Office-Dateien werden noch nicht unterstützt.
 
 ## Modelle wählen
 

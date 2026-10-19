@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, openSync, readSync, closeSync, realpathSync, statSync } from "node:fs";
+import { mkdirSync, openSync, readFileSync, readSync, closeSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,6 +12,57 @@ export const LABELS: Record<Provider, string> = { gemini: "Gemini", claude: "Cla
 export const SYSTEM_PROMPT = `Antworte im Caveman-Ultra-Stil und in der Sprache der Nutzerfrage. Standard: 1–2 kurze Sätze oder Fragmente, höchstens 35 Wörter. Überschreite das nur, wenn der Nutzer ausdrücklich Details verlangt oder Korrektheit beziehungsweise Sicherheit mehr Text erfordert. Gib ausschließlich die direkte Antwort, notwendige Fakten, Befehle oder Code aus. Keine Begrüßung, Einleitung, Höflichkeitsfloskeln, Beispiele ohne Nachfrage, Wiederholung, Zusammenfassung oder Abschlussformel. Bewahre Zahlen, Bedingungen und Verneinungen exakt. Verändere keine Dateien und führe keine Befehle aus.`;
 
 const ANSWER_TIMEOUT_MS = 180_000;
+const MAX_PROMPT_CHARS = 600_000;
+
+export const MAX_FILE_BYTES = 200_000;
+export const MAX_TOTAL_ATTACHMENT_BYTES = 400_000;
+
+export type Attachment = { name: string; path: string; content: string };
+
+/**
+ * Liest Textdateien für den Anhang. Binärdateien (Bilder, PDFs, Office) werden abgelehnt,
+ * weil sie als Text eingefügt werden und die CLIs hier ohne Datei-Werkzeuge laufen.
+ */
+export function readAttachments(paths: string[]): Attachment[] {
+  const result: Attachment[] = [];
+  let total = 0;
+  for (const file of paths) {
+    const name = path.basename(file);
+    let stat;
+    try {
+      stat = statSync(file);
+    } catch {
+      throw new Error(`${name}: Datei nicht gefunden.`);
+    }
+    if (stat.isDirectory()) throw new Error(`${name} ist ein Ordner. Bitte einzelne Dateien wählen.`);
+    if (stat.size > MAX_FILE_BYTES) throw new Error(`${name} ist zu groß (${Math.round(stat.size / 1000)} KB, höchstens ${MAX_FILE_BYTES / 1000} KB).`);
+    total += stat.size;
+    if (total > MAX_TOTAL_ATTACHMENT_BYTES) throw new Error(`Anhänge zusammen zu groß (höchstens ${MAX_TOTAL_ATTACHMENT_BYTES / 1000} KB).`);
+    const buffer = readFileSync(file);
+    if (isBinary(buffer)) throw new Error(`${name} ist keine Textdatei. Bilder, PDFs und Office-Dateien werden noch nicht unterstützt.`);
+    result.push({ name, path: file, content: buffer.toString("utf8") });
+  }
+  return result;
+}
+
+export function isBinary(buffer: Buffer): boolean {
+  const sample = buffer.subarray(0, 8000);
+  if (sample.includes(0)) return true;
+  // Bekannte Binärformate am Dateianfang erkennen (PDF, PNG, JPEG, ZIP/Office, GIF).
+  const head = sample.subarray(0, 4).toString("latin1");
+  return head.startsWith("%PDF") || head.startsWith("\x89PNG") || head.startsWith("\xFF\xD8") || head.startsWith("PK") || head.startsWith("GIF8");
+}
+
+/** Hängt Dateiinhalte an die Frage an. Längster Backtick-Zaun wird überboten, damit Code im Anhang nichts bricht. */
+export function withAttachments(question: string, attachments: Attachment[]): string {
+  if (attachments.length === 0) return question;
+  const blocks = attachments.map((a) => {
+    const longest = Math.max(2, ...(a.content.match(/`+/g) ?? []).map((m) => m.length));
+    const fence = "`".repeat(longest + 1);
+    return `Datei: ${a.name}\n${fence}\n${a.content}\n${fence}`;
+  });
+  return `${question}\n\nAngehängte Dateien (Inhalt beachten):\n\n${blocks.join("\n\n")}`;
+}
 const STATUS_TIMEOUT_MS = 15_000;
 
 /** Modellnamen dürfen nur harmlose Zeichen enthalten (kein Leerzeichen, keine Optionen). */
@@ -458,7 +509,7 @@ export async function run(request: RunRequest): Promise<RunResult> {
   const args = argumentsFor(request.provider, request.model);
   if (typeof request.prompt !== "string" || !request.prompt.trim()) throw new Error("Frage fehlt.");
   const prompt = buildPrompt(request.prompt, Array.isArray(request.history) ? request.history : []);
-  if (prompt.length > 100_000) throw new Error("Gespräch zu lang. Bitte ein neues Gespräch beginnen.");
+  if (prompt.length > MAX_PROMPT_CHARS) throw new Error("Gespräch zu lang. Bitte ein neues Gespräch beginnen.");
 
   const shellDirs = loginShellDirectories();
   const [command, prefix] = resolveExecutable(request.provider, request.customPaths, process.env, shellDirs);
