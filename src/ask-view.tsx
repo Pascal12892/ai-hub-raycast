@@ -1,0 +1,194 @@
+import { Action, ActionPanel, Color, Icon, Keyboard, List, environment, getPreferenceValues, openExtensionPreferences, showToast, Toast } from "@raycast/api";
+import path from "node:path";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LABELS, run, type ChatMessage, type CustomPaths, type Provider } from "./bridge";
+
+type Preferences = { claudePath?: string; codexPath?: string; agyPath?: string };
+
+type Status = "idle" | "running" | "done" | "error" | "cancelled";
+type ProviderState = { status: Status; question?: string; answer?: string; error?: string; history: ChatMessage[] };
+
+const ICONS: Record<Provider, string> = { gemini: "gemini.png", claude: "claude.png", codex: "codex.png" };
+
+function emptyState(providers: Provider[]): Record<string, ProviderState> {
+  return Object.fromEntries(providers.map((p) => [p, { status: "idle", history: [] } satisfies ProviderState]));
+}
+
+function customPaths(): CustomPaths {
+  const prefs = getPreferenceValues<Preferences>();
+  return { claude: prefs.claudePath, codex: prefs.codexPath, gemini: prefs.agyPath };
+}
+
+function markdownFor(state: ProviderState): string {
+  const parts: string[] = [];
+  for (let i = 0; i + 1 < state.history.length; i += 2) {
+    parts.push(`**Du:** ${state.history[i].text}\n\n${state.history[i + 1].text}`);
+  }
+  if (state.status === "running") parts.push(`**Du:** ${state.question}\n\n_Antwort läuft…_`);
+  if (state.status === "error") parts.push(`**Du:** ${state.question}\n\n**Fehler:** ${state.error}`);
+  if (state.status === "cancelled") parts.push(`**Du:** ${state.question}\n\n_Abgebrochen._`);
+  return parts.join("\n\n---\n\n") || "_Noch keine Anfrage._";
+}
+
+function subtitleFor(state: ProviderState): string {
+  if (state.status === "running") return "Antwort läuft…";
+  if (state.status === "error") return state.error ?? "Fehler";
+  if (state.status === "cancelled") return "Abgebrochen";
+  if (state.status === "done") return (state.answer ?? "").replace(/\s+/g, " ").slice(0, 120);
+  return "";
+}
+
+function accessoryFor(status: Status): List.Item.Accessory[] {
+  switch (status) {
+    case "running":
+      return [{ icon: { source: Icon.Clock, tintColor: Color.Orange }, tooltip: "Läuft" }];
+    case "done":
+      return [{ icon: { source: Icon.Checkmark, tintColor: Color.Green }, tooltip: "Fertig" }];
+    case "error":
+      return [{ icon: { source: Icon.Warning, tintColor: Color.Red }, tooltip: "Fehler" }];
+    case "cancelled":
+      return [{ icon: { source: Icon.XMarkCircle, tintColor: Color.SecondaryText }, tooltip: "Abgebrochen" }];
+    default:
+      return [];
+  }
+}
+
+export function AskView(props: { providers: Provider[]; initialQuestion?: string }) {
+  const { providers, initialQuestion } = props;
+  const [states, setStates] = useState<Record<string, ProviderState>>(() => emptyState(providers));
+  const [searchText, setSearchText] = useState("");
+  const controllers = useRef(new Map<Provider, AbortController>());
+  const statesRef = useRef(states);
+  statesRef.current = states;
+  const started = useRef(false);
+
+  const update = (provider: Provider, change: (s: ProviderState) => ProviderState) => setStates((prev) => ({ ...prev, [provider]: change(prev[provider]) }));
+
+  const send = useCallback(
+    (raw: string) => {
+      const question = raw.trim();
+      if (!question) return;
+      if (providers.some((p) => statesRef.current[p].status === "running")) {
+        showToast({ style: Toast.Style.Failure, title: "Es läuft noch eine Anfrage", message: "Erst abbrechen oder warten." });
+        return;
+      }
+      setSearchText("");
+      const paths = customPaths();
+      const workspace = path.join(environment.supportPath, "Workspace");
+      for (const provider of providers) {
+        const controller = new AbortController();
+        controllers.current.set(provider, controller);
+        const history = statesRef.current[provider].history;
+        update(provider, (s) => ({ ...s, status: "running", question, error: undefined }));
+        run({ provider, prompt: question, history, workspace, customPaths: paths, signal: controller.signal })
+          .then((answer) =>
+            update(provider, (s) => ({
+              ...s,
+              status: "done",
+              answer,
+              history: [...s.history, { role: "user", text: question }, { role: "assistant", text: answer }],
+            })),
+          )
+          .catch((error: Error) =>
+            update(provider, (s) => (error.name === "AbortError" ? { ...s, status: "cancelled" } : { ...s, status: "error", error: error.message })),
+          )
+          .finally(() => {
+            if (controllers.current.get(provider) === controller) controllers.current.delete(provider);
+          });
+      }
+    },
+    [providers],
+  );
+
+  const cancel = () => {
+    for (const controller of controllers.current.values()) controller.abort();
+  };
+
+  const reset = () => {
+    cancel();
+    setStates(emptyState(providers));
+  };
+
+  useEffect(() => {
+    if (!started.current && initialQuestion?.trim()) {
+      started.current = true;
+      send(initialQuestion);
+    }
+    return () => {
+      for (const controller of controllers.current.values()) controller.abort();
+    };
+  }, []);
+
+  const running = providers.some((p) => states[p].status === "running");
+  const anyActivity = providers.some((p) => states[p].status !== "idle");
+  const hasHistory = providers.some((p) => states[p].history.length > 0);
+  const target = providers.length > 1 ? "alle drei" : LABELS[providers[0]];
+
+  const sendAction = searchText.trim() ? (
+    <Action title={hasHistory ? "Rückfrage senden" : "Senden"} icon={Icon.ArrowRight} onAction={() => send(searchText)} />
+  ) : null;
+
+  const commonActions = (
+    <>
+      {running ? (
+        <Action title="Abbrechen" icon={Icon.XMarkCircle} style={Action.Style.Destructive} shortcut={{ modifiers: ["ctrl"], key: "c" }} onAction={cancel} />
+      ) : null}
+      {anyActivity ? <Action title="Neues Gespräch" icon={Icon.Plus} shortcut={Keyboard.Shortcut.Common.New} onAction={reset} /> : null}
+      <Action title="Einstellungen öffnen" icon={Icon.Gear} onAction={openExtensionPreferences} />
+    </>
+  );
+
+  return (
+    <List
+      filtering={false}
+      searchText={searchText}
+      onSearchTextChange={setSearchText}
+      isLoading={running}
+      isShowingDetail={anyActivity}
+      searchBarPlaceholder={hasHistory ? "Rückfrage eingeben und Enter drücken" : `Frage an ${target} eingeben und Enter drücken`}
+    >
+      {!anyActivity ? (
+        <List.EmptyView
+          icon={providers.length > 1 ? "all.png" : ICONS[providers[0]]}
+          title={`Frage an ${target}`}
+          description="Tippen startet noch keine Anfrage. Erst Enter sendet."
+          actions={
+            <ActionPanel>
+              {sendAction}
+              {commonActions}
+            </ActionPanel>
+          }
+        />
+      ) : (
+        providers.map((provider) => {
+          const state = states[provider];
+          const copy =
+            state.status === "done" && state.answer ? (
+              <>
+                <Action.CopyToClipboard title="Antwort kopieren" content={state.answer} />
+                <Action.Paste title="Antwort einfügen" content={state.answer} shortcut={{ modifiers: ["cmd", "shift"], key: "v" }} />
+              </>
+            ) : null;
+          return (
+            <List.Item
+              key={provider}
+              id={provider}
+              title={LABELS[provider]}
+              subtitle={subtitleFor(state)}
+              icon={ICONS[provider]}
+              accessories={accessoryFor(state.status)}
+              detail={<List.Item.Detail markdown={markdownFor(state)} />}
+              actions={
+                <ActionPanel>
+                  {sendAction}
+                  {copy}
+                  {commonActions}
+                </ActionPanel>
+              }
+            />
+          );
+        })
+      )}
+    </List>
+  );
+}

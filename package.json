@@ -1,0 +1,93 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "ai-hub",
+  "title": "AI Hub",
+  "description": "Gemini (Antigravity CLI), Claude Code und Codex CLI direkt in Raycast fragen, einzeln oder alle drei parallel. Nutzt die vorhandenen Abo-Anmeldungen, keine API-Schlüssel.",
+  "icon": "extension-icon.png",
+  "author": "pascal12892",
+  "categories": ["Productivity", "Developer Tools"],
+  "license": "MIT",
+  "platforms": ["macOS"],
+  "commands": [
+    {
+      "name": "ask-all",
+      "title": "Alle fragen",
+      "subtitle": "AI Hub",
+      "description": "Frage parallel an Gemini, Claude und Codex senden.",
+      "mode": "view",
+      "icon": "all.png",
+      "arguments": [{ "name": "frage", "placeholder": "Frage", "type": "text", "required": false }]
+    },
+    {
+      "name": "ask-claude",
+      "title": "Claude fragen",
+      "subtitle": "AI Hub",
+      "description": "Frage an Claude Code senden.",
+      "mode": "view",
+      "icon": "claude.png",
+      "arguments": [{ "name": "frage", "placeholder": "Frage", "type": "text", "required": false }]
+    },
+    {
+      "name": "ask-gemini",
+      "title": "Gemini fragen",
+      "subtitle": "AI Hub",
+      "description": "Frage an Gemini über die Antigravity CLI senden.",
+      "mode": "view",
+      "icon": "gemini.png",
+      "arguments": [{ "name": "frage", "placeholder": "Frage", "type": "text", "required": false }]
+    },
+    {
+      "name": "ask-codex",
+      "title": "Codex fragen",
+      "subtitle": "AI Hub",
+      "description": "Frage an Codex CLI senden.",
+      "mode": "view",
+      "icon": "codex.png",
+      "arguments": [{ "name": "frage", "placeholder": "Frage", "type": "text", "required": false }]
+    }
+  ],
+  "preferences": [
+    {
+      "name": "claudePath",
+      "title": "Pfad zu claude",
+      "description": "Nur nötig, wenn claude nicht automatisch gefunden wird. Im Terminal: which claude",
+      "type": "textfield",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "codexPath",
+      "title": "Pfad zu codex",
+      "description": "Nur nötig, wenn codex nicht automatisch gefunden wird. Im Terminal: which codex",
+      "type": "textfield",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "agyPath",
+      "title": "Pfad zu agy (Antigravity CLI)",
+      "description": "Nur nötig, wenn agy nicht automatisch gefunden wird. Im Terminal: which agy",
+      "type": "textfield",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix",
+    "test": "node --test test/bridge.test.ts"
+  },
+  "dependencies": {
+    "@raycast/api": "^2.8.2"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.2.0",
+    "@types/node": "22.19.17",
+    "@types/react": "19.0.10",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.6.0"
+  }
+}
